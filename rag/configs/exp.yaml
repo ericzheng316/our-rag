@@ -1,0 +1,27 @@
+experiment:
+  name: dynamic-rag-rl
+  seed: 42
+
+retrieval:
+  shards:
+    - name: shard_a
+      path: data/shards/shard_a.jsonl
+    - name: shard_b
+      path: data/shards/shard_b.jsonl
+  top_k: 5
+
+llm:
+  provider: qwen
+  model: qwen-plus
+  temperature: 0.2
+
+env:
+  max_steps: 4
+  reward:
+    answer_weight: 1.0
+    latency_weight: 0.1
+
+training:
+  algo: ppo
+  total_timesteps: 50000
+  learning_rate: 3.0e-4

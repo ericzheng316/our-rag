@@ -1,0 +1,142 @@
+# Welcome to RStudio
+
+This document will help you get started with RStudio and its basic functionality.
+
+------------------------------------------------------------------------
+
+## Exit RStudio
+
+To exit RStudio and switch servers, enter the following URL:
+
+`https://jupyter.ncsa.illinois.edu/hub/home`
+
+------------------------------------------------------------------------
+
+## Getting Started
+
+### Opening RStudio
+
+When you open RStudio, you'll see four main panes:
+
+1\. **Script Editor**: Top-left (for writing and editing R code).
+
+2\. **Console**: Bottom-left (for running R commands interactively).
+
+3\. **Environment/History**: Top-right (for viewing objects and tracking your work).
+
+4\. **Files/Plots/Packages/Help**: Bottom-right (for file management, visualizations, and documentation).
+
+------------------------------------------------------------------------
+
+## Writing and Running Code
+
+### Writing Code
+
+-   Use the **Script Editor** to write reusable code.
+    -   Create a new script: `File -> New File -> R Script`.
+    -   Save the script: `File -> Save As`.
+
+### Running Code
+
+-   Run a single line: Place the cursor on the line and press `Run`
+-   Run multiple lines: Highlight the lines and press `Run`
+
+------------------------------------------------------------------------
+
+## Exploring Data
+
+### Loading Data
+
+To load a dataset:
+
+``` r
+my_data <- read.csv("my_file.csv")`
+```
+
+### Viewing Data
+
+Use the `View()` function:
+
+``` r
+View(my_data)
+```
+
+Check the structure of the data:
+
+``` r
+str(my_data)
+```
+
+------------------------------------------------------------------------
+
+## Creating Plots
+
+### Basic Plot Example
+
+Use the `plot()` function to visualize the data:
+
+``` r
+plot(my_data$x, my_data$y, main = "My Plot", xlab = "X-axis", ylab = "Y-axis")
+```
+
+### Advanced Plots
+
+Install and use the `ggplot2` package:
+
+``` r
+install.packages("ggplot2")
+library(ggplot2)
+
+ggplot(my_data, aes(x = x, y = y)) +
+  geom_point() +
+  labs(title = "My ggplot", x = "X-axis", y = "Y-axis")
+```
+
+------------------------------------------------------------------------
+
+## Managing Packages
+
+### Installing Packages
+
+Install a new package using:
+
+``` r
+install.packages("package_name")
+```
+
+### Loading Packages
+
+``` r
+library(package_name)
+```
+
+------------------------------------------------------------------------
+
+## Accessing Help
+
+### Getting Help on a Function
+
+Use the `?` operator access documentation
+
+``` r
+?mean
+```
+
+### Searching the Help Pane
+
+Go to the `Help` tab in the bottom-right pane and search for topics
+
+------------------------------------------------------------------------
+
+## Saving and Exporting
+
+### Saving Your Workspace
+
+Saving your session's objects: save.image("my_workspace.RData")
+
+### Exporting Plots
+
+Use the `Plots` tab to export a plot as an image or PDF
+
+
+------------------------------------------------------------------------

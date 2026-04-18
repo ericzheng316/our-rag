@@ -1,0 +1,36 @@
+# 大数据目录
+data/
+models/
+node-v22.14.0-linux-x64/
+node.tar.xz
+logs/
+*.log
+
+# conda/pip 环境
+.conda/
+.local/
+.cache/
+.npm/
+
+# Claude 配置
+.claude/
+.claude.json
+
+# Jupyter
+.jupyter/
+.ipython/
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.bin
+*.pt
+*.safetensors
+
+# 其他
+.triton/
+.bash_history
+.bashrc
+.config/
