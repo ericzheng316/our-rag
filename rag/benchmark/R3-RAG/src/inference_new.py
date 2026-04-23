@@ -10,7 +10,6 @@ import sys
 sys.path.insert(0, "/home/boyuz5/rag/src")
 from belief.obs_extractor import E5Embedder, extract_observation
 from belief.belief_state import BeliefState
-from belief.belief_prompt import belief_to_prompt_prefix
 POST_BATCH_SIZE = 2048
 SSL_RETRY = 8
 DEBUG = False
@@ -109,8 +108,31 @@ def get_args():
                         help="Max samples per dataset (None = all).")
     parser.add_argument('--distractor_file', type=str, default=None,
                         help="JSONL with distractor_paras field; skips retriever server when set.")
+    parser.add_argument('--use_belief', action='store_true', default=False,
+                        help="Enable belief-guided doc selection (variable k based on Beta-Bernoulli confidence).")
+    parser.add_argument('--belief_threshold', type=float, default=0.70,
+                        help="Confidence threshold above which doc count is halved.")
     args = parser.parse_args()
     return args
+
+def _belief_doc_k(record: dict, args) -> int:
+    """Return doc count for this record based on belief confidence.
+
+    When use_belief is off, or belief has not yet been updated (step==0),
+    always return the full num_passages_one_retrieval.
+    Above belief_threshold confidence, halve the doc count (min 3).
+    """
+    max_k = record['num_passages_one_retrieval']
+    if not args.use_belief:
+        return max_k
+    belief = record.get('belief')
+    if belief is None or belief.step == 0:
+        return max_k
+    confidence = belief.ret_quality   # E[θ_ret] = _ret_alpha / (_ret_alpha + _ret_beta)
+    if confidence >= args.belief_threshold:
+        return max(3, max_k // 2)
+    return max_k
+
 
 def split_query_remote(split_url, querys : list):
     res = []
@@ -218,7 +240,7 @@ def solve_init(args):
                             'split_querys' : [],
                             "docs":[],
                             "state": "undo",
-                            "belief": BeliefState(),
+                            **({'belief': BeliefState()} if args.use_belief else {}),
                         }
                         for data in datas
                     ])
@@ -244,10 +266,7 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
         messages = [
             [
                 {"role": "system","content": "You are a helpful assistant"},
-                {"role": "user","content": (
-                    belief_to_prompt_prefix(records[i]['belief']) + "\n"
-                    if records[i]['belief'].step > 0 else ""
-                ) + records[i]['context']}
+                {"role": "user","content": records[i]['context']}
             ] for i in remain_idxs
         ]
         outputs = ckpt.chat(messages, sampling_params)
@@ -292,33 +311,50 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
             for (i, query) in retrive_list:
                 paras = distractor_ctx.get(records[i]['problem'], [])
                 if query_emb_map and paras:
-                    # Encode paragraphs (truncated) and compute cosine sim with current sub-query
                     para_embs = embedder.encode([p[:300] for p in paras])   # (n, dim)
-                    scores = (query_emb_map[query] @ para_embs.T).tolist()  # (n,) dot = cosine (normed)
+                    scores = (query_emb_map[query] @ para_embs.T).tolist()  # cosine (normed vecs)
                 else:
-                    scores = [0.72] * len(paras)   # neutral fallback if no embedder
-                doc_list.append([
+                    scores = [0.72] * len(paras)
+                docs = [
                     {'id': f'dist_{i}_{j}', 'contents': p, 'score': float(scores[j])}
                     for j, p in enumerate(paras)
-                ])
+                ]
+                # Sort best-first so top-k selection is score-ordered
+                docs.sort(key=lambda d: d['score'], reverse=True)
+                doc_list.append(docs)
         else:
             doc_list = GetRetrieval(args.retrieve_url, [query for _ , query in retrive_list])
-        id_set = {}
-        doc_dict = {}
-        for doc , (i , query) in zip(doc_list , retrive_list):
-            id_set[i] = id_set.get(i , set()) | set(d['id'] for d in doc[:records[i]['num_passages_one_retrieval']])
-            for d in doc[:records[i]['num_passages_one_retrieval']]:
-                doc_dict[d['id']] = d['contents']
 
-        id_set = {i : random.sample(list(ids) , min(len(ids) , records[i]['num_passages_one_split_retrieval'])) for i , ids in id_set.items()}
-        for i , ids in id_set.items():
+        # Build doc_dict and score_dict; apply belief-guided doc count
+        doc_dict = {}
+        score_dict = {}
+        id_order = {}   # i → score-ordered list of selected ids
+        for doc, (i, query) in zip(doc_list, retrive_list):
+            k = _belief_doc_k(records[i], args)
+            selected = doc[:k]
+            if i not in id_order:
+                id_order[i] = []
+            for d in selected:
+                if d['id'] not in doc_dict:   # dedup across sub-queries
+                    id_order[i].append(d['id'])
+                doc_dict[d['id']] = d['contents']
+                score_dict[d['id']] = d.get('score', 0.72)
+
+        for i, ids in id_order.items():
             records[i]['docs'].append([doc_dict[id] for id in ids])
 
         #===============================Update BeliefState==============================
-        if embedder is not None:
+        if embedder is not None and args.use_belief:
             val_map = {i: val for val, i in zip(vals, remain_idxs)}
-            for i, ids in id_set.items():
-                retrieved_docs = [{'id': id, 'contents': doc_dict[id]} for id in ids]
+            for i, ids in id_order.items():
+                belief = records[i].get('belief')
+                if belief is None:
+                    continue
+                # Pass scores so obs_extractor uses real E5 cosine sim (not mid-range fallback)
+                retrieved_docs = [
+                    {'id': id, 'contents': doc_dict[id], 'score': score_dict.get(id, 0.72)}
+                    for id in ids
+                ]
                 last_query = records[i]['split_querys'][-1][0] if records[i]['split_querys'] else records[i]['problem']
                 obs = extract_observation(
                     docs=retrieved_docs,
@@ -327,7 +363,7 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
                     response_dict=val_map.get(i),
                     split_queries=records[i]['split_querys'][-1] if records[i]['split_querys'] else None,
                 )
-                records[i]['belief'].update(**obs)
+                belief.update(**obs)
 
         #===============================Update context===================================
         print(f"Turn{turn+ 1} : Update context*********************************")

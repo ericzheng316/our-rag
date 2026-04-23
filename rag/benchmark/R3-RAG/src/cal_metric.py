@@ -3,6 +3,7 @@ import pdb
 import requests,re,random
 from vllm import LLM, SamplingParams
 
+import csv
 import string
 from collections import Counter
 import json,os
@@ -260,6 +261,8 @@ def get_args():
     parser.add_argument('--model_path', type=str, default="/opt/nas/p/models/Qwen_models/Qwen2.5-72B-Instruct", help="Path to the model.") # 
     parser.add_argument('--num_search_one_attempt', type=int, default=10, help="Number of search attempts per query.") # 
     parser.add_argument('--log_dir', type=str, default='~/logs') #
+    parser.add_argument('--exp_name', type=str, default=None,
+                        help="Experiment name written into results.csv (defaults to log_dir basename).")
     args = parser.parse_args()
     return args
 def solve(args):
@@ -444,6 +447,30 @@ def statistics(args, records, llm):
             "avg_docs" : avg_docs
         }) 
     json.dump(finals, open(os.path.join(args.log_dir, "results.json"), "w", encoding='utf-8'), ensure_ascii=False , indent=2)
+
+    # CSV export for easy table building
+    exp_name = args.exp_name or os.path.basename(os.path.normpath(args.log_dir))
+    n_samples = len(records)
+    csv_path = os.path.join(args.log_dir, "results.csv")
+    fieldnames = ['exp_name', 'dataset', 'n_samples', 'num_search_one_attempt',
+                  'num_passages', 'em', 'f1', 'em_processed', 'f1_processed', 'judge', 'avg_docs']
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for f in finals:
+            writer.writerow({
+                'exp_name': exp_name,
+                'dataset': f['dataset'],
+                'n_samples': n_samples,
+                'num_search_one_attempt': f['num_search_one_attempt'],
+                'num_passages': f['num_passages_one_retrieval'],
+                'em': f'{f["em"]:.4f}',
+                'f1': f'{f["f1"]:.4f}',
+                'em_processed': f'{f["em_processed"]:.4f}',
+                'f1_processed': f'{f["f1_processed"]:.4f}',
+                'judge': f'{f["judge"]:.4f}',
+                'avg_docs': f'{f["avg_docs"]:.2f}',
+            })
 
 if __name__ == "__main__":
     args = get_args()
