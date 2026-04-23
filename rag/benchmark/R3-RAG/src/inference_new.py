@@ -98,7 +98,7 @@ def get_args():
     parser.add_argument('--num_search_one_attempt', type=int, default=10, help="Number of search attempts per query.")
     parser.add_argument('--stop_token_id', type=int, default=128009, help="eos token id to stop.")
     parser.add_argument('--num_of_docs', type=int, default=12, help="eos token id to stop.")
-    parser.add_argument('--tp', type=int, default=8, help="eos token id to stop.")
+    parser.add_argument('--tp', type=int, default=1, help="tensor_parallel_size for vllm (default 1 for single GPU).")
     parser.add_argument('--log_dir', type=str, default='~/logs')
     parser.add_argument('--datasets', type=str, default='2wikimultihopqa,hotpotqa,musique',
                         help="Comma-separated list of datasets to evaluate.")
@@ -112,6 +112,9 @@ def get_args():
                         help="Enable belief-guided doc selection (variable k based on Beta-Bernoulli confidence).")
     parser.add_argument('--belief_threshold', type=float, default=0.70,
                         help="Confidence threshold above which doc count is halved.")
+    parser.add_argument('--e5_model_path', type=str, default=None,
+                        help="Path to e5-base-v2 model (required when --use_belief). "
+                             "If not set, inferred as $HOME/models/e5-base-v2.")
     args = parser.parse_args()
     return args
 
@@ -177,8 +180,12 @@ def solve(args):
     # try:
         ckpt, records = solve_init(args)
         distractor_ctx = load_distractor_ctx(args.distractor_file) if args.distractor_file else None
-        print("[BeliefState] Loading E5Embedder for observation extraction ...")
-        embedder = E5Embedder("/home/boyuz5/models/e5-base-v2")
+        if args.use_belief:
+            e5_path = args.e5_model_path or os.path.join(os.path.expanduser("~"), "models", "e5-base-v2")
+            print(f"[BeliefState] Loading E5Embedder from {e5_path} ...")
+            embedder = E5Embedder(e5_path)
+        else:
+            embedder = None
         solve_main(args, ckpt, records, temperature=0, distractor_ctx=distractor_ctx, embedder=embedder)
         # pdb.set_trace()
         # re_init_no_answer_records(records)

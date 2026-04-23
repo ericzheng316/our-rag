@@ -35,7 +35,7 @@ if __name__ == "__main__":
             'use_retrieval_cache': False,
             'retrieval_cache_path': None,
             'use_reranker': False,
-            'faiss_gpu': True,
+            'faiss_gpu': False,   # CPU FAISS — Flat index (53GB) won't fit on GPU alongside LLM
             'use_sentence_transformer': False,
             'retrieval_pooling_method': 'mean',
             "instruction": None,

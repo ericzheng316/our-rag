@@ -295,9 +295,28 @@ Root cause: In distractor setting, gold and distractor docs share the same topic
 
 - `BeliefState` has NO `.alpha`/`.beta` attributes — use `belief.ret_quality` for E[θ_ret]
 - Belief prefix injection was **removed** (was hurting -1~2pt on distractor)
-- `--use_belief False` (default) = clean baseline, zero BeliefState overhead
+- `--use_belief False` (default) = clean baseline; E5Embedder is **not loaded** in baseline (no VRAM waste)
+- `--e5_model_path` in run scripts: path to e5-base-v2 model, defaults to `$HOME/models/e5-base-v2` if omitted
 - `STOP_TOKEN_ID=151645` is Qwen2.5 EOS token — do not change for R3-RAG-Qwen
-- Retriever server writes `HOST`/`SPLIT_HOST` to `run_scripts/.env_retriever`; inference scripts `source` this file
+- `--tp 1` (default): tensor_parallel for vllm; increase to match GPU count (e.g., `--tp 4` on 4×A100)
+- Retriever server writes `HOST`/`SPLIT_HOST` to `run_scripts/.env_retriever`; inference scripts `source` this file — **start retriever before inference**
 - `results.csv` is written alongside `results.json` after every eval run
-- `faiss_gpu=True` is set in `retrive_server.py` — requires `faiss-gpu` from conda, not `faiss-cpu`
+- `faiss_gpu=False` in `retrive_server.py` — CPU FAISS search. Flat index (53GB) cannot fit on any single GPU alongside the LLM; CPU retrieval is required
 - The `.venv` is **not committed** to git. Recreate with `python3.13 -m venv .venv && .venv/bin/pip install vllm==0.18.1`
+- Interrupted inference can be resumed: `solve_init()` checks for existing `records.jsonl` and loads completed records, skipping already-finished samples
+- `--split_url` is required for real retrieval mode (the split server rewrites compound questions into sub-queries). Without it, R3-RAG's multi-hop decomposition breaks silently
+
+## GPU / RAM Requirements
+
+| Process | VRAM | CPU RAM | Script |
+|---------|------|---------|--------|
+| vllm inference (R3-RAG-Qwen ~7B, tp=1) | ~16GB | - | 06/07/09/10 |
+| E5 retrieval embedder (when use_belief) | ~0.5GB | - | 07/10 |
+| Retriever FAISS search (CPU) | 0 | ~55GB (index loaded to RAM) | 02 |
+| Split server (Qwen2.5-7B, tp=1) | ~16GB | - | 03 |
+| Build Flat FAISS index | 0 | ≥80GB | build_index_from_emb.py |
+
+**Practical setup on single A100 (80GB VRAM, 512GB RAM):**
+- GPU 0: vllm inference (R3-RAG-Qwen)
+- GPU 1 (or same GPU): split server (Qwen2.5-7B) — or `--tp 1` on same GPU if 80GB fits both
+- Retriever: CPU-only (FAISS Flat in system RAM ~53GB)

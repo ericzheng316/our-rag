@@ -33,6 +33,7 @@ CUDA_VISIBLE_DEVICES=0 DATASET_ROOT=${DATASET_ROOT} \
     --distractor_file ${DISTRACTOR_FILE} \
     --use_belief \
     --belief_threshold 0.70 \
+    --e5_model_path /home/boyuz5/models/e5-base-v2 \
     2>&1 | tee ${LOG_DIR}/inference.log
 
 echo "[$(date)] 推理完成"

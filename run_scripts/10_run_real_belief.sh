@@ -36,6 +36,7 @@ CUDA_VISIBLE_DEVICES=0 DATASET_ROOT=${DATASET_ROOT} \
     --split_url http://${SPLIT_HOST}:8002/split_query \
     --use_belief \
     --belief_threshold 0.70 \
+    --e5_model_path /home/boyuz5/models/e5-base-v2 \
     2>&1 | tee ${LOG_DIR}/inference.log
 
 echo "[$(date)] 推理完成"
