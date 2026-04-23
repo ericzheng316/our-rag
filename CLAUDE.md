@@ -24,6 +24,53 @@ run_scripts/
 算法設計.md                  # BAMDP/POMDP formalism doc
 ```
 
+## Path Configuration (IMPORTANT when migrating)
+
+All hardcoded paths use `/home/boyuz5` as base. On a new machine, replace in bulk:
+
+```bash
+# Run from repo root, replace /home/boyuz5 with your actual home dir
+grep -rl "/home/boyuz5" run_scripts/ rag/benchmark/R3-RAG/src/inference_new.py rag/src/belief/obs_extractor.py \
+  | xargs sed -i 's|/home/boyuz5|/YOUR/HOME|g'
+```
+
+Files with hardcoded paths:
+| File | What changes |
+|------|-------------|
+| `run_scripts/chunked_encode.py` | CORPUS_PATH, MODEL_PATH, SAVE_DIR |
+| `run_scripts/build_index_from_emb.py` | EMB_DIR, INDEX_PATH |
+| `run_scripts/prep_full_distractor.py` | FLASHRAG_PATH, HF_PATH, OUTPUT_PATH |
+| `run_scripts/0[0-8]_*.sh` | all paths |
+| `rag/benchmark/R3-RAG/src/inference_new.py` | sys.path.insert, E5Embedder path |
+| `rag/src/belief/obs_extractor.py` | E5_MODEL_PATH (smoke test only) |
+
+Expected directory layout on new machine:
+```
+$HOME/
+  rag/                          # git clone of this repo
+  models/
+    R3-RAG-Qwen/                # HF: Fudan-DISC/R3-RAG-Qwen
+    e5-base-v2/                 # HF: intfloat/e5-base-v2
+    Qwen2.5-7B-Instruct/        # HF: Qwen/Qwen2.5-7B-Instruct
+  data/
+    flashrag_datasets/
+      hotpotqa/
+        dev.jsonl               # flashrag format (7405条)
+        dev_distractor.jsonl    # run prep_full_distractor.py to generate
+      retrieval-corpus/
+        wiki18_100w_clean.jsonl # 17.3M passages, 12GB
+    datasets/
+      hotpotqa/distractor_jsonl/
+        dev.jsonl               # HF original format (needed for prep script)
+    indices/
+      e5_full_emb/
+        embeddings.bin          # 25GB fp16 memmap (run chunked_encode.py)
+        meta.json
+      e5_Flat/
+        e5_Flat.index           # build from embeddings.bin (needs ≥80GB RAM)
+  logs/                         # created automatically by run scripts
+```
+
 ## Models needed (download from HuggingFace)
 - `Fudan-DISC/R3-RAG-Qwen` → inference model
 - `intfloat/e5-base-v2` → retrieval embedder
