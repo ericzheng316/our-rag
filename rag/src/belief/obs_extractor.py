@@ -4,8 +4,6 @@ to drive the BeliefState Bayesian update.
 
 Maps R3-RAG's internal data structures → (retrieval_relevance, answer_consistency,
 doc_contradiction_rate, query_hop_count) for BeliefState.update().
-
-Stage 1: no NLI models. All signals derived from retriever scores + embedder.
 """
 
 from __future__ import annotations
@@ -21,9 +19,6 @@ class E5Embedder:
     """
     Thin wrapper around a local E5-base-v2 checkpoint that exposes the same
     .encode(texts) -> np.ndarray interface used throughout obs_extractor.
-
-    E5 encode: mean-pool last hidden states over non-padding tokens, then L2-normalize.
-    The model is loaded once and reused across all extractor calls.
     """
 
     def __init__(self, model_path: str, device: Optional[str] = None):
@@ -52,19 +47,17 @@ class E5Embedder:
                 return_tensors="pt",
             ).to(self.device)
             output = self.model(**encoded)
-            # Mean pool over non-padding tokens
-            attention_mask = encoded["attention_mask"]               # (b, seq)
-            token_embs = output.last_hidden_state                    # (b, seq, dim)
-            mask_expanded = attention_mask.unsqueeze(-1).float()     # (b, seq, 1)
-            summed = (token_embs * mask_expanded).sum(dim=1)         # (b, dim)
-            counts = mask_expanded.sum(dim=1).clamp(min=1e-9)        # (b, 1)
-            mean_pooled = summed / counts                            # (b, dim)
-            # L2 normalize → unit vectors, cosine sim = dot product
+            attention_mask = encoded["attention_mask"]
+            token_embs = output.last_hidden_state
+            mask_expanded = attention_mask.unsqueeze(-1).float()
+            summed = (token_embs * mask_expanded).sum(dim=1)
+            counts = mask_expanded.sum(dim=1).clamp(min=1e-9)
+            mean_pooled = summed / counts
             normed = torch.nn.functional.normalize(mean_pooled, p=2, dim=1)
             all_embeddings.append(normed.cpu().float().numpy())
         return np.vstack(all_embeddings)
 
-# Stopwords for query content-word extraction (minimal English set)
+
 _STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -76,95 +69,113 @@ _STOPWORDS = {
     "me", "him", "her", "us", "them", "my", "your", "his", "our",
 }
 
-# E5-base-v2 cosine similarity range (empirical, used for calibration)
 _E5_SCORE_MIN = 0.50
 _E5_SCORE_MAX = 0.95
-
-# Minimum cosine similarity to count a query word as "covered" by a doc
 _COVERAGE_SIM_THRESHOLD = 0.60
 
 
 def _cosine_sim_matrix(embeddings: np.ndarray) -> np.ndarray:
-    """
-    Compute n×n cosine similarity matrix from row-stacked embeddings.
-    Assumes embeddings may not be unit-normalized (safe to re-normalize).
-    """
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms = np.where(norms < 1e-9, 1e-9, norms)   # avoid division by zero
+    norms = np.where(norms < 1e-9, 1e-9, norms)
     normed = embeddings / norms
-    return normed @ normed.T                         # (n, n), values in [-1, 1]
+    return normed @ normed.T
 
+
+# ── Task 1: Z-score calibrated sigmoid retrieval signal ───────────────────────
 
 def extract_retrieval_relevance(
     docs: List[Dict[str, Any]],
     query: str,
     embedder,
+    background_docs: Optional[List[Dict[str, Any]]] = None,
 ) -> float:
     """
-    Composite retrieval-quality signal from three sub-signals.
+    Task 1: Z-score calibrated sigmoid retrieval quality signal.
 
-    (a) calibrated_relevance  — mean E5 cosine score, mapped to [0,1]
-    (b) coverage              — pairwise diversity of retrieved doc embeddings
-    (c) query_coverage        — fraction of query content-words semantically covered
+    Uses background pool (top-100 retrieved docs) to compute distribution μ, σ.
+    Compares top-k mean score against background via Z-score, then maps to (0,1)
+    with temperature-scaled sigmoid.
 
-    Returns x_ret = 0.50 * calibrated_relevance + 0.30 * coverage + 0.20 * query_coverage
+    P = sigmoid(T * (Z - τ)),  T=5.0, τ=1.5
+
+    Falls back to static normalization if no background pool is available.
+
+    # [OLD ALGO - static normalization]:
+    # calibrated_relevance = (raw - _E5_SCORE_MIN) / (_E5_SCORE_MAX - _E5_SCORE_MIN)
+    # x_ret = 0.50 * calibrated_relevance + 0.30 * coverage + 0.20 * query_coverage
     """
     if not docs:
-        return 0.0
+        return 0.5
 
-    # ── (a) Calibrated relevance ──────────────────────────────────────────────
-    scores = [float(d["score"]) for d in docs if "score" in d]
-    if scores:
-        raw = sum(scores) / len(scores)
-    else:
-        raw = (_E5_SCORE_MIN + _E5_SCORE_MAX) / 2   # mid-range fallback
+    scores_topk = [float(d["score"]) for d in docs if "score" in d]
+    if not scores_topk:
+        return 0.5
 
-    calibrated_relevance = (raw - _E5_SCORE_MIN) / (_E5_SCORE_MAX - _E5_SCORE_MIN)
-    calibrated_relevance = float(np.clip(calibrated_relevance, 0.0, 1.0))
+    s_topk = float(np.mean(scores_topk))
 
-    # ── (b) Coverage (diversity of retrieved set) ─────────────────────────────
-    doc_texts = [d.get("contents", "")[:200] for d in docs]
-    doc_embs = embedder.encode(doc_texts, show_progress_bar=False)   # (n, dim)
+    # Use background pool for dynamic calibration when available
+    if background_docs and len(background_docs) > len(docs):
+        bg_scores = [float(d["score"]) for d in background_docs if "score" in d]
+        if len(bg_scores) >= 5:
+            mu = float(np.mean(bg_scores))
+            sigma = float(np.std(bg_scores))
+            if sigma < 1e-6:
+                # All scores identical → no discrimination → neutral
+                z = 0.0
+            else:
+                z = (s_topk - mu) / sigma
+            T, tau = 5.0, 1.5
+            p = 1.0 / (1.0 + math.exp(-T * (z - tau)))
+            return float(np.clip(p, 0.01, 0.99))
 
-    if len(doc_embs) < 2:
-        coverage = 0.0
-    else:
-        sim_mat = _cosine_sim_matrix(doc_embs)       # (n, n)
-        n = len(doc_embs)
-        # Collect upper-triangle distances (i < j)
-        pairwise_distances = [
-            1.0 - float(sim_mat[i, j])
-            for i in range(n)
-            for j in range(i + 1, n)
-        ]
-        # High mean distance → diverse set → better coverage signal
-        coverage = float(np.mean(pairwise_distances))
-        coverage = float(np.clip(coverage, 0.0, 1.0))
+    # Fallback: static range normalization (original behavior)
+    calibrated = (s_topk - _E5_SCORE_MIN) / (_E5_SCORE_MAX - _E5_SCORE_MIN)
+    return float(np.clip(calibrated, 0.01, 0.99))
 
-    # ── (c) Query coverage ────────────────────────────────────────────────────
-    # Extract content words (non-stopword tokens)
-    import re
-    tokens = re.findall(r"[a-z]+", query.lower())
-    content_words = [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
 
-    if not content_words:
-        query_coverage = 0.5    # no content words → neutral
-    else:
-        # Encode each content word individually and check against doc embeddings
-        word_embs = embedder.encode(content_words, show_progress_bar=False)  # (w, dim)
-        sim_mat_wd = _cosine_sim_matrix(
-            np.vstack([word_embs, doc_embs])
-        )
-        # sub-matrix: words (rows 0..w-1) vs docs (rows w..w+n-1)
-        w = len(content_words)
-        word_doc_sim = sim_mat_wd[:w, w:]   # (w, n)
-        max_sim_per_word = word_doc_sim.max(axis=1)   # (w,)
-        covered = int((max_sim_per_word >= _COVERAGE_SIM_THRESHOLD).sum())
-        query_coverage = covered / len(content_words)
+# ── Task 2: LLM reliability via logit margin ──────────────────────────────────
 
-    x_ret = 0.50 * calibrated_relevance + 0.30 * coverage + 0.20 * query_coverage
-    return float(np.clip(x_ret, 0.0, 1.0))
+def extract_llm_logit_margin(logprobs_per_token) -> Optional[float]:
+    """
+    Task 2: LLM reliability signal from logit margin of first 5 generated tokens.
 
+    Margin = P(top1) - P(top2) for each token.
+    O_llm = 1 - exp(-k * avg_margin),  k=5.0
+
+    High margin → model is decisive → high reliability.
+    Low margin  → model is uncertain → low reliability.
+
+    Returns None if logprobs unavailable (caller skips update).
+
+    # [OLD ALGO - embedding grounding]:
+    # answer_consistency = max cosine similarity between answer embedding and doc embeddings
+    # See extract_answer_consistency() below (kept for reference).
+    """
+    if not logprobs_per_token:
+        return None
+
+    margins = []
+    for token_lps in logprobs_per_token[:5]:
+        if not token_lps or len(token_lps) < 2:
+            continue
+        sorted_lps = sorted(token_lps.values(), key=lambda x: x.logprob, reverse=True)
+        try:
+            p1 = math.exp(sorted_lps[0].logprob)
+            p2 = math.exp(sorted_lps[1].logprob)
+            margins.append(p1 - p2)
+        except (IndexError, OverflowError):
+            continue
+
+    if not margins:
+        return None
+
+    avg_margin = float(np.mean(margins))
+    k = 5.0
+    o_llm = 1.0 - math.exp(-k * avg_margin)
+    return float(np.clip(o_llm, 0.01, 0.99))
+
+
+# ── Legacy signals (kept for reference / distractor mode) ─────────────────────
 
 def extract_answer_consistency(
     response_dict: Dict[str, Any],
@@ -172,11 +183,9 @@ def extract_answer_consistency(
     embedder,
 ) -> Optional[float]:
     """
-    Embedding-based grounding score: how well the model's answer is
-    supported by the retrieved documents.
-
-    grounding = max cosine similarity between answer embedding and any doc embedding.
-    Returns None if no answer text is available (caller should skip the update).
+    [LEGACY] Embedding-based grounding score.
+    Used in distractor mode (no logprobs available).
+    Replaced by logit margin in real-retrieval mode (Task 2).
     """
     answer_text = (
         response_dict.get("answer")
@@ -184,17 +193,16 @@ def extract_answer_consistency(
         or ""
     )
     if not answer_text or not docs:
-        return None   # skip update — do NOT default to 0.6
+        return None
 
     doc_texts = [d.get("contents", "")[:300] for d in docs]
     all_texts = [answer_text] + doc_texts
-    embs = embedder.encode(all_texts, show_progress_bar=False)  # (1+n, dim)
+    embs = embedder.encode(all_texts, show_progress_bar=False)
 
-    answer_emb = embs[0:1]       # (1, dim)
-    doc_embs = embs[1:]          # (n, dim)
+    answer_emb = embs[0:1]
+    doc_embs = embs[1:]
 
     sim_mat = _cosine_sim_matrix(np.vstack([answer_emb, doc_embs]))
-    # Row 0 is answer, cols 1..n are docs
     grounding = float(sim_mat[0, 1:].max())
     return float(np.clip(grounding, 0.0, 1.0))
 
@@ -203,53 +211,67 @@ def extract_doc_contradiction_rate(
     docs: List[Dict[str, Any]],
     embedder,
 ) -> float:
-    """
-    Topic drift variance as a proxy for corpus noise.
-
-    High variance in doc-to-centroid similarity → some docs are far from
-    the topic center → likely distractors or contradictory content.
-
-    noise_signal = min(1.0, variance_of_centroid_similarities * 10)
-    """
+    """Topic drift variance as a proxy for corpus noise."""
     if len(docs) < 2:
         return 0.0
 
     doc_texts = [d.get("contents", "")[:200] for d in docs]
-    embs = embedder.encode(doc_texts, show_progress_bar=False)  # (n, dim)
+    embs = embedder.encode(doc_texts, show_progress_bar=False)
 
-    # Normalize for cosine similarity
     norms = np.linalg.norm(embs, axis=1, keepdims=True)
     norms = np.where(norms < 1e-9, 1e-9, norms)
-    normed = embs / norms                              # (n, dim), unit vectors
+    normed = embs / norms
 
-    centroid = normed.mean(axis=0)                    # (dim,)
+    centroid = normed.mean(axis=0)
     centroid_norm = np.linalg.norm(centroid)
     if centroid_norm < 1e-9:
         return 0.0
-    centroid = centroid / centroid_norm               # unit centroid
+    centroid = centroid / centroid_norm
 
-    # Cosine similarity of each doc to the centroid
-    sim_to_centroid = normed @ centroid               # (n,)
-
-    # High variance → heterogeneous set → more likely distractors/noise
+    sim_to_centroid = normed @ centroid
     drift_variance = float(np.var(sim_to_centroid))
     noise_signal = min(1.0, drift_variance * 10)
     return float(np.clip(noise_signal, 0.0, 1.0))
 
 
 def extract_query_hop_count(split_queries: List[str]) -> float:
-    """
-    Map number of sub-queries to a difficulty signal in [0, 1].
-
-    Uses a steeper exponential curve than the previous 1-1/(1+h) sigmoid,
-    better separating 1-hop (≈0) from 2-hop (≈0.50) from 3+-hop (≈0.75+).
-
-    x_diff = 1 - exp(-0.7 * (h - 1))
-    """
+    """Map number of sub-queries to difficulty signal in [0, 1]."""
     h = max(1, len(split_queries))
     x_diff = 1.0 - math.exp(-0.7 * (h - 1))
     return float(np.clip(x_diff, 0.0, 1.0))
 
+
+def extract_evidence_novelty(
+    new_docs: List[Dict[str, Any]],
+    pool_docs: List[Dict[str, Any]],
+    embedder,
+) -> float:
+    """
+    How much new information do new_docs add relative to the existing evidence pool.
+
+    novelty = 1 - mean(max cosine similarity of each new doc to any pool doc)
+    High (→1): new docs are fresh → retrieval still useful
+    Low (→0):  new docs are redundant → retrieval saturated → stop
+    """
+    if not pool_docs:
+        return 1.0
+    if not new_docs:
+        return 0.0
+
+    new_texts  = [d.get("contents", "")[:200] for d in new_docs]
+    pool_texts = [d.get("contents", "")[:200] for d in pool_docs]
+
+    all_embs  = embedder.encode(new_texts + pool_texts, show_progress_bar=False)
+    new_embs  = all_embs[:len(new_texts)]
+    pool_embs = all_embs[len(new_texts):]
+
+    sims     = new_embs @ pool_embs.T
+    max_sims = sims.max(axis=1)
+    novelty  = 1.0 - float(max_sims.mean())
+    return float(np.clip(novelty, 0.0, 1.0))
+
+
+# ── Main extractor ────────────────────────────────────────────────────────────
 
 def extract_observation(
     docs: List[Dict[str, Any]],
@@ -257,104 +279,85 @@ def extract_observation(
     embedder,
     response_dict: Optional[Dict[str, Any]] = None,
     split_queries: Optional[List[str]] = None,
+    pool_docs: Optional[List[Dict[str, Any]]] = None,
+    background_docs: Optional[List[Dict[str, Any]]] = None,
+    logprobs_per_token=None,
 ) -> Dict[str, Any]:
     """
     Extract all observation signals in one call.
 
-    Returns a dict whose keys exactly match BeliefState.update() parameter names,
-    suitable for **kwargs unpacking.
-
     Args:
-        docs:          Retrieved documents (list of dicts with "score", "contents")
-        query:         The retrieval query string for this step
-        embedder:      A SentenceTransformer instance (reused from retriever pipeline)
-        response_dict: R3-RAG parsed response with "answer" and/or "analysis" keys
-        split_queries: Sub-queries generated by the split module this step
+        docs:              Top-k retrieved documents (used for inference + belief update)
+        query:             Retrieval query string for this step
+        embedder:          E5Embedder instance
+        response_dict:     R3-RAG parsed response with "answer" and/or "analysis" keys
+        split_queries:     Sub-queries generated by split module this step
+        pool_docs:         Documents from previous turns (for novelty computation)
+        background_docs:   Full top-100 retrieval results (Task 1: Z-score background)
+        logprobs_per_token: vllm logprobs output (Task 2: logit margin)
     """
     obs: Dict[str, Any] = {}
 
-    obs["retrieval_relevance"] = extract_retrieval_relevance(docs, query, embedder)
+    # ── Retrieval quality signal ──────────────────────────────────────────────
+    # Use novelty when pool exists (turns 2+): measures incremental information gain.
+    # Use Z-score calibrated score (Task 1) for first turn or when no pool.
+    if pool_docs:  # non-empty pool → turns 2+: use novelty; empty/None → turn 1: use Z-score
+        obs["retrieval_relevance"] = extract_evidence_novelty(docs, pool_docs, embedder)
+    else:
+        # Task 1: Z-score with background pool
+        obs["retrieval_relevance"] = extract_retrieval_relevance(
+            docs, query, embedder, background_docs=background_docs
+        )
 
-    if response_dict is not None:
+    # ── LLM reliability signal ────────────────────────────────────────────────
+    # Task 2: Use logit margin when logprobs available (real-retrieval mode).
+    # Fallback to embedding grounding in distractor mode (no logprobs).
+    if logprobs_per_token is not None:
+        llm_rel = extract_llm_logit_margin(logprobs_per_token)
+        if llm_rel is not None:
+            obs["answer_consistency"] = llm_rel
+    elif response_dict is not None and embedder is not None:
+        # [LEGACY fallback] embedding-based grounding
         consistency = extract_answer_consistency(response_dict, docs, embedder)
         if consistency is not None:
             obs["answer_consistency"] = consistency
 
+    # ── Corpus noise ──────────────────────────────────────────────────────────
     obs["doc_contradiction_rate"] = extract_doc_contradiction_rate(docs, embedder)
 
+    # ── Query difficulty ──────────────────────────────────────────────────────
     if split_queries is not None:
         obs["query_hop_count"] = extract_query_hop_count(split_queries)
 
     return obs
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Smoke test
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Smoke test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import sys
-    import os
+    import sys, os, json
     sys.path.insert(0, os.path.dirname(__file__))
-
     from belief_state import BeliefState
 
-    E5_MODEL_PATH = "/home/boyuz5/models/e5-base-v2"
+    E5_MODEL_PATH = "/root/models/e5-base-v2"
     print(f"Loading E5Embedder from {E5_MODEL_PATH} ...")
     embedder = E5Embedder(E5_MODEL_PATH)
 
     mock_docs = [
-        {
-            "score": 0.82,
-            "contents": (
-                "Scott Derrickson is an American director and screenwriter, "
-                "best known for Sinister and Doctor Strange."
-            ),
-            "title": "Scott Derrickson",
-        },
-        {
-            "score": 0.74,
-            "contents": (
-                "Ed Wood was an American filmmaker notorious for low-budget productions "
-                "in the 1950s and 1960s."
-            ),
-            "title": "Ed Wood",
-        },
-        {
-            "score": 0.61,
-            "contents": (
-                "The 1999 Odisha cyclone was a devastating tropical storm that struck "
-                "the eastern coast of India."
-            ),
-            "title": "1999 Odisha cyclone",
-        },
+        {"score": 0.82, "contents": "Scott Derrickson is an American director."},
+        {"score": 0.74, "contents": "Ed Wood was an American filmmaker."},
+        {"score": 0.61, "contents": "The 1999 Odisha cyclone struck eastern India."},
     ]
-
-    mock_response = {
-        "analysis": "Both Scott Derrickson and Ed Wood are American, so they share the same nationality.",
-        "answer": "yes",
-    }
-
-    mock_split_queries = [
-        "What is the nationality of Scott Derrickson?",
-        "What is the nationality of Ed Wood?",
+    mock_background = mock_docs + [
+        {"score": 0.65, "contents": "Some other doc."},
+        {"score": 0.60, "contents": "Another doc."},
     ]
-
-    query = "Were Scott Derrickson and Ed Wood of the same nationality?"
-
-    print("\n--- Extracting observation ---")
     obs = extract_observation(
         docs=mock_docs,
-        query=query,
+        query="Were Scott Derrickson and Ed Wood of the same nationality?",
         embedder=embedder,
-        response_dict=mock_response,
-        split_queries=mock_split_queries,
+        background_docs=mock_background,
     )
     print("obs =", obs)
-
-    print("\n--- Updating BeliefState ---")
     belief = BeliefState()
     belief.update(**obs)
-    import json
     print(json.dumps(belief.to_dict(), indent=2))
-    print("\nbelief_vector =", belief.belief_vector)
-    print("\nRepr:", belief)

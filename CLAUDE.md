@@ -246,48 +246,160 @@ $HOME/
 
 ---
 
-## Completed Experiments (2026-04-23, ICRN H200, distractor mode)
+## Completed Experiments — Full Results Table
 
-HotpotQA distractor, 7405 samples, num_search=5, docs=10:
+HotpotQA dev, 7405条, num_search=5, docs_per_turn=10
 
-| Config | EM_proc | F1_proc | Judge | avg_docs |
-|--------|---------|---------|-------|----------|
-| baseline (no belief) | 58.0% | 74.9% | 81.6% | 11.21 |
-| belief doc-filter (th=0.70) | 58.0% | 74.9% | 81.6% | 11.21 |
+| Config | EM_proc | F1_proc | Judge | avg_docs | Log dir |
+|--------|---------|---------|-------|----------|---------|
+| Distractor baseline | 58.0% | 74.9% | 81.6% | 11.21 | r3rag-qwen-distractor-baseline |
+| Distractor belief (th=0.70) | 58.0% | 74.9% | 81.6% | 11.21 | r3rag-qwen-distractor-belief |
+| **Real baseline** | **43.2%** | **58.1%** | **62.8%** | **15.87** | r3rag-qwen-real-full-baseline |
+| Real belief v1 | 35.1% | 48.6% | 52.9% | 16.53 | r3rag-qwen-real-full-belief |
+| Real belief v2 | 41.9% | 56.5% | 61.3% | 15.90 | (fixed v1 bugs partially) |
+| Real belief no_rerank | 43.5% | 58.1% | 62.9% | 15.87 | r3rag-qwen-real-belief-norerank |
+| Real belief v3 | 43.1% | 57.6% | 62.5% | 15.59 | r3rag-qwen-real-belief-v3 |
+| Real belief v3b | 43.4% | 58.0% | 62.6% | 15.88 | r3rag-qwen-real-belief-v3b |
 
-**Finding:** Belief doc-filtering had zero effect in distractor mode.
-Root cause: In distractor setting, gold and distractor docs share the same topic → E5 cosine scores are nearly identical → `ret_quality` never crosses 0.70 → threshold never triggers.
-**Real retrieval is required for belief to show improvement.**
+**Distractor finding:** Belief doc-filtering had zero effect. Root cause: gold/distractor docs share the same topic → E5 scores nearly identical → `ret_quality` never crosses threshold.
+
+**Real retrieval finding (2026-04-27):** All belief variants within ±0.3pt of baseline. BeliefState provides no measurable improvement.
+
+### Why BeliefState Has No Effect (diagnosed 2026-04-27)
+
+Root cause: **R3-RAG already does implicit early stopping.** The model generates `[OUTPUT]` when satisfied:
+
+```
+belief.step distribution across 7405 samples:
+  step 0:  629 (8.5%)   ← answers immediately, no retrieval
+  step 1: 2481 (33.5%)
+  step 2: 3661 (49.4%)  ← typical 2-hop query resolved in 2 turns
+  step 3:  432 (5.8%)
+  step 4+: 202 (2.7%)
+  Average actual turns: ~1.62   → avg_docs = 1.62 × 9.8 ≈ 15.87
+```
+
+Condition A (early stop when `ret_quality > threshold`) **never fires**:
+```
+ret_quality distribution: mean=0.667, p90=0.747, p99=0.748, max=0.866
+threshold=0.92 → 0/7405 triggers
+threshold=0.85 → 1/7405 triggers
+```
+
+The Beta-Bernoulli model saturates: with prior (1,1) and ≤5 turns of moderate observations,
+`E[θ_ret]` is bounded by ~0.85. Threshold=0.92 is unachievable in practice.
+
+Dynamic budget (extra turns) activates for 355/7405 (4.8%) samples (hard queries), but their
+final ret_quality (mean=0.612) is lower than average — extra turns don't help them.
+
+### Cross-turn Reranking is Always Harmful — Never Enable
+
+| Method | EM_proc | Judge | avg_docs |
+|--------|---------|-------|----------|
+| no_rerank | 43.5% | 62.9% | 15.87 |
+| score-based rerank (v2) | 41.9% | 61.3% | 15.90 |
+| RRF rerank (v3) | 43.1% | 62.5% | 15.59 |
 
 ---
 
-## Current Status (2026-04-23)
+## Current Status (2026-04-27)
 
-- [x] Distractor experiments done (7405条 baseline + belief)
-- [x] Wiki corpus encoded → `embeddings.bin` 25GB (on ICRN H200)
-- [x] CLAUDE.md written for context persistence
-- [ ] **Migrate to dedicated A100** (ICRN shared, only ~32GB CPU RAM free)
-- [ ] **Build Flat FAISS index** (needs ≥80GB RAM, run `build_index_from_emb.py`)
-- [ ] **Implement belief early stopping** in `inference_new.py` (NOT YET DONE)
-- [ ] **Run real retrieval experiments** (09/10/11 scripts ready, index not built yet)
+**Current machine: H100 on Vast.ai**
+
+- [x] All distractor experiments (7405条 baseline + belief)
+- [x] Flat FAISS index built → `~/data/indices/e5_Flat/e5_Flat.index` (~53GB)
+- [x] Real baseline done → 43.2% EM / 62.8% Judge
+- [x] All belief variants done (v1→v3b) — no improvement over baseline
+- [x] BeliefState failure diagnosed: model has implicit early stopping; Condition A threshold unreachable
+- [ ] **DECISION NEEDED**: next research direction (see options below)
 
 ---
 
-## Next Tasks (in order)
+## BeliefState — Ablation 保留
 
-1. **Rent dedicated A100** (Lambda Labs / RunPod / AutoDL):
-   - A100 80GB SXM typically has 512GB+ system RAM → enough for Flat index build
-   - Re-encode corpus (30 min) OR transfer `embeddings.bin` via `rsync` from ICRN
-   - Build Flat FAISS index: `conda run -n rag python3 run_scripts/build_index_from_emb.py`
+BeliefState 全部代码保留，用作消融实验对比：
 
-2. **Implement belief early stopping** in `inference_new.py`:
-   - After each retrieval round, update BeliefState
-   - If `belief.ret_quality > threshold` → set a flag → force-answer pass (no more retrieval)
-   - Key paper claim: reduces `avg_docs` while maintaining `EM_proc`/`Judge`
+```
+--use_belief --no_rerank   # BeliefState ablation
+(无 flag)                  # 纯 baseline
+--use_hyde                 # HyDE second hop
+```
 
-3. **Run real retrieval** (09_run_real_baseline.sh + 10_run_real_belief.sh)
+消融表设计：
+| Config | EM | F1 | Judge | avg_docs | 备注 |
+|--------|----|----|-------|----------|------|
+| Baseline | 43.2% | 58.1% | 62.8% | 15.87 | script 09 |
+| + BeliefState | 43.5% | 58.1% | 62.9% | 15.87 | script 10b (no_rerank) |
+| + HyDE | 41.7% | 56.2% | 61.5% | 15.80 | script 10e ← -1.5pt，失败 |
+| + GRPO R_sf | ? | ? | ? | ? | 待实现 |
+| + HyDE + GRPO | ? | ? | ? | ? | 终极目标 |
 
-4. **Paper table**: compare distractor-baseline vs real-baseline vs real-belief-early-stop
+---
+
+## Research Roadmap (2026-04-27 确定方向)
+
+**核心发现：** 桥接实体注入 sq2 与否，EM 差距 +27.9pt（71.1% vs 43.2%）。
+瓶颈是检索召回率（49.5%）和 R3-RAG-Qwen 的 second-hop query 质量，不是 BeliefState。
+
+### Phase 1 — HyDE（已实现，已运行，**失败 -1.5pt**）
+
+**结果：** EM 41.7% vs baseline 43.2%，-1.5pt。
+
+**失败根因：**
+1. Hypothetical passage 凭 sub-query 字符串生成，没有第一跳检索证据做依据
+   → 正确做法：基于 turn1 retrieved docs 生成 hypothetical，但这需要 R3-RAG-Qwen 生成
+2. 错误级联放大：turns=2 → -3.4pt；turns=3 → -13.8pt；turns=4 → -15.7pt
+3. 大多数 sq2 已实体化（"What govt position did Shirley Temple hold?"），HyDE 净加噪声
+
+**结论：** HyDE 对 single-hop 有效，对 multi-hop 有害。此路不通，跳过。
+
+**实现位置（代码保留备用）：**
+- `split_server.py`: `/hyde_passage` endpoint
+- `inference_new.py`: `--use_hyde` flag + `hyde_query_remote()`
+
+### Phase 2 — GRPO with R_sf Process Reward
+
+```
+R_total = λ1·R_ans + λ2·Σ_t r_sf_marginal_t + λ3·R_format
+r_sf_marginal_t = |new_sf_titles_found_at_t| / |sf_titles_total|
+```
+
+- 过程奖励直接对每次检索动作提供 dense 信号
+- 教模型生成"桥接实体显式化"的 new_query
+- 训练数据：HotpotQA train split（90k条，含 supporting_facts）
+
+**数据准备：**
+```bash
+python3 -c "
+from datasets import load_dataset; import json
+ds = load_dataset('hotpot_qa', 'fullwiki', split='train')
+with open('/root/data/flashrag_datasets/hotpotqa/train_sf.jsonl','w') as f:
+    for r in ds:
+        f.write(json.dumps({'id':r['id'],'question':r['question'],
+          'golden_answers':[r['answer']],'supporting_facts':r['supporting_facts'],
+          'type':r['type']}) + '\n')
+"
+```
+
+### Phase 3 — Cold Start SFT 实体化（可选，配合 GRPO）
+
+改 SFT 训练数据生成 prompt，让 teacher（GPT-4o/Claude）产出的轨迹中，
+turn 2 的 new_query 必须包含 turn 1 检索到的桥接实体：
+`"What government position did [Shirley Temple] hold?"` 而非 `"What was her role?"`
+
+目标：给 GRPO 更好的 cold start，缩小策略探索空间。
+
+---
+
+## Key Diagnostic Numbers (2026-04-27)
+
+```
+bridge 问题占比:         80% (5918/7405)
+桥接实体注入 sq2 率:     42% (1423/3358)
+注入时 EM:              71.1%   未注入时 EM: 43.2%   差距: +27.9pt
+检索命中率 (gold in docs): 49.5%  命中时 EM: 77.4%
+当前整体 EM_proc:         43.2%  理论上界: ~77%
+```
 
 ---
 

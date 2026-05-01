@@ -6,17 +6,17 @@
 
 set -e
 
-CORPUS_DIR=/home/boyuz5/data/flashrag_datasets/retrieval-corpus
-MODEL=/home/boyuz5/models/e5-base-v2
-INDEX_BUILDER=/home/boyuz5/rag/tool/FlashRAG/flashrag/retriever/index_builder.py
+CORPUS_DIR=/root/data/flashrag_datasets/retrieval-corpus
+MODEL=/root/models/e5-base-v2
+INDEX_BUILDER=/root/rag/tool/FlashRAG/flashrag/retriever/index_builder.py
 
 if [ "${MINI:-0}" = "1" ]; then
     CORPUS=${CORPUS_DIR}/wiki18_mini.jsonl
-    SAVE_DIR=/home/boyuz5/data/indices/e5_Flat_mini
+    SAVE_DIR=/root/data/indices/e5_Flat_mini
     echo "[$(date)] 构建 MINI 索引 (100K 语料) -> ${SAVE_DIR}"
 else
-    CORPUS=${CORPUS_DIR}/wiki18_100w_clean.jsonl
-    SAVE_DIR=/home/boyuz5/data/indices/e5_Flat
+    CORPUS=${CORPUS_DIR}/wiki18_100w.jsonl
+    SAVE_DIR=/root/data/indices/e5_Flat
     echo "[$(date)] 构建全量索引 (17.3M 语料) -> ${SAVE_DIR}"
 fi
 

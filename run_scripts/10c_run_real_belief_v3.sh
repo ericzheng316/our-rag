@@ -1,7 +1,10 @@
 #!/bin/bash
-# 真实检索 HotpotQA baseline (7405条, docs=10, no belief)
-# 前提：02_start_retriever.sh 和 03_start_split_server.sh 已在后台启动
-# 用法: bash 09_run_real_baseline.sh
+# BeliefState v3: Tasks 1-4 全部启用
+#   Task 1: Z-score calibrated retrieval signal (top-100 background pool)
+#   Task 2: Logit margin LLM reliability (logprobs=5)
+#   Task 3: Exponential budget + dual-condition stopping (Cond-A: llm>0.85, Cond-B: ΔQ<0.05×2)
+#   Task 4: RRF cross-turn reranking (k=60)
+# 用法: bash 10c_run_real_belief_v3.sh
 
 set -e
 
@@ -10,11 +13,11 @@ source /root/run_scripts/.env_retriever
 MODEL=/root/models/R3-RAG-Qwen
 STOP_TOKEN_ID=151645
 DATASET_ROOT=/root/data/flashrag_datasets
-MODEL_NAME="r3rag-qwen-real-full-baseline"
+MODEL_NAME="r3rag-qwen-real-belief-v3"
 LOG_DIR=/root/logs/${MODEL_NAME}
 
 mkdir -p ${LOG_DIR}
-echo "[$(date)] 真实检索 baseline: hotpotqa dev (7405条), docs=10, no belief"
+echo "[$(date)] Belief v3 inference: hotpotqa dev (7405条)"
 echo "  retriever: http://${HOST}:8001/search"
 echo "  split:     http://${SPLIT_HOST}:8002/split_query"
 echo "  log:       ${LOG_DIR}/inference.log"
@@ -33,6 +36,8 @@ CUDA_VISIBLE_DEVICES=0 DATASET_ROOT=${DATASET_ROOT} \
     --dev_file dev.jsonl \
     --retrieve_url http://${HOST}:8001/search \
     --split_url http://${SPLIT_HOST}:8002/split_query \
+    --use_belief \
+    --e5_model_path /root/models/e5-base-v2 \
     2>&1 | tee ${LOG_DIR}/inference.log
 
 echo "[$(date)] 推理完成"

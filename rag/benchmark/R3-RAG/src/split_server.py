@@ -11,6 +11,7 @@ parser.add_argument('--host', type=str, required=True, help="Host address (e.g.,
 parser.add_argument('--port', type=int, required=True, help="Port number (e.g., 8002)")
 parser.add_argument('--model_path', type=str, default="/opt/nas/p/models/Qwen_models/Qwen2.5-72B-Instruct", help="Path to the model")
 parser.add_argument('--tp', type=int, default=8, help="GPU numbers")
+parser.add_argument('--gpu_memory_utilization', type=float, default=0.25, help="vllm gpu memory utilization")
 
 class QueryRequest(BaseModel):
     question: str
@@ -18,6 +19,9 @@ class QueryRequest(BaseModel):
     standard_answers: list
 class SplitRequest(BaseModel):
     querys: list
+
+class HyDERequest(BaseModel):
+    querys: list  # sub-queries to generate hypothetical passages for
 def split_answer(response_text):
     result = {}
     lines = response_text.strip().split('\n')
@@ -66,16 +70,40 @@ def split_query(querys : list):
     matches = [re.findall(r'"(.*?)"', output) for output in outputs]
     return matches
 
+def hyde_prompt(query: str) -> str:
+    return (
+        f'Write a short Wikipedia-style passage (2-3 sentences) that directly answers '
+        f'the following question. Include specific entity names, dates, and factual '
+        f'relationships. Do not add commentary, just the passage.\n\n'
+        f'Question: "{query}"\nPassage:'
+    )
+
+def generate_hyde_passages(querys: list) -> list:
+    conversations = [
+        [
+            {"role": "system", "content": "You are a factual Wikipedia passage writer."},
+            {"role": "user", "content": hyde_prompt(q)},
+        ]
+        for q in querys
+    ]
+    outputs = llm.chat(conversations, SamplingParams(temperature=0.0, max_tokens=128))
+    return [o.outputs[0].text.strip() for o in outputs]
+
 @app.post("/split_query")
 async def split_query_endpoint(request: SplitRequest):
     response=split_query(request.querys)
     return {"response": response}
+
+@app.post("/hyde_passage")
+async def hyde_passage_endpoint(request: HyDERequest):
+    passages = generate_hyde_passages(request.querys)
+    return {"passages": passages}
 
 if __name__ == "__main__":
     args = parser.parse_args()
 
     sampling_params = SamplingParams(temperature=0.0, max_tokens=512)
     print(f"Loading model from {args.model_path}...")
-    llm = LLM(model=args.model_path, tensor_parallel_size=args.tp)
+    llm = LLM(model=args.model_path, tensor_parallel_size=args.tp, gpu_memory_utilization=args.gpu_memory_utilization)
 
     uvicorn.run(app,host=args.host, port=args.port)

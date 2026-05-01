@@ -8,8 +8,8 @@ Peak CPU RAM: ~53 GB (Flat index in memory) + 1.5 GB per chunk.
 Requires ≥80 GB RAM.  Run on dedicated A100 node, NOT on shared ICRN H200.
 No GPU needed for this phase (index building is CPU-only).
 
-Input:  /home/boyuz5/data/indices/e5_full_emb/embeddings.bin
-Output: /home/boyuz5/data/indices/e5_Flat/e5_Flat.index
+Input:  /root/data/indices/e5_full_emb/embeddings.bin
+Output: /root/data/indices/e5_Flat/e5_Flat.index
 """
 
 import json
@@ -21,8 +21,8 @@ import numpy as np
 from tqdm import tqdm
 
 # ── Config ───────────────────────────────────────────────────────────────────
-EMB_DIR      = "/home/boyuz5/data/indices/e5_full_emb"
-INDEX_PATH   = "/home/boyuz5/data/indices/e5_Flat/e5_Flat.index"
+EMB_DIR      = "/root/data/indices/e5_full_emb"
+INDEX_PATH   = "/root/data/indices/e5_Flat/e5_Flat.index"
 CHUNK_SIZE   = 500_000   # passages per chunk during add
 DIM          = 768
 # ─────────────────────────────────────────────────────────────────────────────
