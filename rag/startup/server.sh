@@ -26,7 +26,7 @@ tmux new-window -t service:2 -n vllm
 tmux send-keys -t service:vllm "
 while true; do
     echo '启动vllm服务...'
-    CUDA_VISIBLE_DEVICES=2 vllm serve //home/boyuz5/models/Qwen2.5-7B-Instruct/ \\
+    CUDA_VISIBLE_DEVICES=2 vllm serve //root/models/Qwen2.5-7B-Instruct/ \\
         --gpu-memory-utilization 0.9 \\
         --tensor-parallel-size 1 \\
         --port $vllm_port \\
@@ -79,7 +79,7 @@ start_retriever() {
 start_vllm() {
     while true; do
         echo '启动vllm服务...'
-        CUDA_VISIBLE_DEVICES=0 vllmserve //home/boyuz5/models/Qwen2.5-7B-Instruct/ \
+        CUDA_VISIBLE_DEVICES=0 vllmserve //root/models/Qwen2.5-7B-Instruct/ \
             --gpu-memory-utilization 0.9 \
             --tensor-parallel-size 1 \
             --port "$vllm_port" \

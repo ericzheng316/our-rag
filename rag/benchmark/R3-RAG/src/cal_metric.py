@@ -285,7 +285,7 @@ def solve_init(args):
     records = [json.loads(line) for line in open(os.path.join(args.log_dir, "records.jsonl"), "r", encoding='utf-8')]
     if DEBUG:
         records = records[:4]
-    llm = LLM(model=args.model_path , tensor_parallel_size=1)
+    llm = LLM(model=args.model_path , tensor_parallel_size=1, gpu_memory_utilization=0.6)
     return records, llm
 def solve_core(args, records, llm, temperature=0):
     sampling_params = SamplingParams(temperature=temperature, max_tokens=512)

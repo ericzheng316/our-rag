@@ -4,7 +4,7 @@
 #   BELIEF=1 bash 11_calc_metrics_real.sh   -> belief run
 #   bash 11_calc_metrics_real.sh             -> baseline run
 
-SPLIT_MODEL=/home/boyuz5/models/Qwen2.5-7B-Instruct
+SPLIT_MODEL=/root/models/Qwen2.5-7B-Instruct
 
 if [ "${BELIEF:-0}" = "1" ]; then
     MODEL_NAME="r3rag-qwen-real-full-belief"
@@ -14,11 +14,11 @@ else
     EXP_NAME="real_baseline_docs10"
 fi
 
-LOG_DIR=/home/boyuz5/logs/${MODEL_NAME}
+LOG_DIR=/root/logs/${MODEL_NAME}
 
-cd /home/boyuz5/rag/benchmark/R3-RAG
+cd /root/rag/benchmark/R3-RAG
 
-CUDA_VISIBLE_DEVICES=0 /home/boyuz5/rag/.venv/bin/python src/cal_metric.py \
+CUDA_VISIBLE_DEVICES=0 /root/rag/.venv/bin/python src/cal_metric.py \
     --model_path ${SPLIT_MODEL} \
     --log_dir ${LOG_DIR} \
     --num_search_one_attempt 5 \

@@ -6,13 +6,13 @@
 
 set -e
 
-source /home/boyuz5/run_scripts/.env_retriever
+source /root/run_scripts/.env_retriever
 
-MODEL=/home/boyuz5/models/R3-RAG-Qwen
+MODEL=/root/models/R3-RAG-Qwen
 STOP_TOKEN_ID=151645
-DATASET_ROOT=/home/boyuz5/data/flashrag_datasets
+DATASET_ROOT=/root/data/flashrag_datasets
 MODEL_NAME="r3rag-qwen-real-full-belief"
-LOG_DIR=/home/boyuz5/logs/${MODEL_NAME}
+LOG_DIR=/root/logs/${MODEL_NAME}
 
 mkdir -p ${LOG_DIR}
 echo "[$(date)] 真实检索 belief early-stopping: hotpotqa dev (7405条), threshold=0.70"
@@ -20,10 +20,10 @@ echo "  retriever: http://${HOST}:8001/search"
 echo "  split:     http://${SPLIT_HOST}:8002/split_query"
 echo "  log:       ${LOG_DIR}/inference.log"
 
-cd /home/boyuz5/rag/benchmark/R3-RAG
+cd /root/rag/benchmark/R3-RAG
 
 CUDA_VISIBLE_DEVICES=0 DATASET_ROOT=${DATASET_ROOT} \
-/home/boyuz5/rag/.venv/bin/python src/inference_new.py \
+/root/rag/.venv/bin/python src/inference_new.py \
     --model_path ${MODEL} \
     --log_dir ${LOG_DIR} \
     --num_search_one_attempt 5 \
@@ -36,7 +36,7 @@ CUDA_VISIBLE_DEVICES=0 DATASET_ROOT=${DATASET_ROOT} \
     --split_url http://${SPLIT_HOST}:8002/split_query \
     --use_belief \
     --belief_threshold 0.70 \
-    --e5_model_path /home/boyuz5/models/e5-base-v2 \
+    --e5_model_path /root/models/e5-base-v2 \
     2>&1 | tee ${LOG_DIR}/inference.log
 
 echo "[$(date)] 推理完成"

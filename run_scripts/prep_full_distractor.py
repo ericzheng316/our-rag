@@ -2,15 +2,15 @@
 Merge flashrag dev.jsonl + HF distractor dev.jsonl into a single file
 with distractor_paras field, suitable for distractor-mode inference.
 
-Output: /home/boyuz5/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl
+Output: /root/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl
 Fields: id, question, golden_answers, metadata, distractor_paras
 """
 
 import json
 
-FLASHRAG_PATH = "/home/boyuz5/data/flashrag_datasets/hotpotqa/dev.jsonl"
-HF_PATH = "/home/boyuz5/data/datasets/hotpotqa/distractor_jsonl/dev.jsonl"
-OUTPUT_PATH = "/home/boyuz5/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl"
+FLASHRAG_PATH = "/root/data/flashrag_datasets/hotpotqa/dev.jsonl"
+HF_PATH = "/root/data/datasets/hotpotqa/distractor_jsonl/dev.jsonl"
+OUTPUT_PATH = "/root/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl"
 
 
 def hf_context_to_paras(context: dict) -> list[str]:

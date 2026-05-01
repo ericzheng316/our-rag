@@ -1,13 +1,120 @@
 import argparse
+import math
 import tqdm
 import requests,re,random
-from vllm import LLM, SamplingParams
 import json,os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import cycle
 from datasets import load_dataset
 import pdb
 import sys
-sys.path.insert(0, "/home/boyuz5/rag/src")
+
+try:
+    from vllm import LLM, SamplingParams
+    _VLLM_AVAILABLE = True
+except ImportError:
+    _VLLM_AVAILABLE = False
+
+try:
+    from openai import OpenAI as _OpenAI
+    _OPENAI_AVAILABLE = True
+except ImportError:
+    _OPENAI_AVAILABLE = False
+
+# --- NIM (NVIDIA Inference Microservices) wrapper ---
+
+_STOP_ID_TO_STR = {
+    128009: "<|eot_id|>",    # Llama 3.1
+    128001: "<|end_of_text|>",
+    151645: "<|im_end|>",    # Qwen2.5
+}
+
+class _NIMOutput:
+    def __init__(self, text, logprobs=None):
+        self.text = text
+        self.logprobs = logprobs
+
+class _NIMResult:
+    def __init__(self, text, logprobs=None):
+        self.outputs = [_NIMOutput(text, logprobs)]
+
+class NIMModel:
+    """Drop-in replacement for vllm.LLM using NVIDIA NIM OpenAI-compatible API.
+
+    NIM enforces 1 concurrent request per API key. We use a per-key Semaphore(1)
+    so each key is held by at most one thread at a time.
+    """
+    BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+    def __init__(self, model: str, api_keys: list, max_workers: int = None):
+        assert _OPENAI_AVAILABLE, "openai package required: pip install openai"
+        self.model = model
+        self._clients = [_OpenAI(base_url=self.BASE_URL, api_key=k) for k in api_keys]
+        # One semaphore per key — prevents concurrent use of the same key.
+        self._sems = [threading.Semaphore(1) for _ in api_keys]
+        self.max_workers = max_workers or len(api_keys)
+        print(f"NIMModel ready: {model}, {len(api_keys)} keys, {self.max_workers} workers")
+
+    def _acquire_client(self):
+        """Block until any key is free, then return (idx, client) with sem held."""
+        while True:
+            for i, sem in enumerate(self._sems):
+                if sem.acquire(blocking=False):
+                    return i, self._clients[i]
+            time.sleep(0.02)
+
+    def _call_one(self, messages, temperature, max_tokens, stop_strs):
+        idx, client = self._acquire_client()
+        try:
+            for attempt in range(6):
+                try:
+                    resp = client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stop=stop_strs or None,
+                    )
+                    text = resp.choices[0].message.content or ""
+                    return _NIMResult(text, logprobs=None)
+                except Exception as e:
+                    wait = 2 ** attempt
+                    print(f"[NIM] key={idx} attempt {attempt+1} failed: {e}; retrying in {wait}s")
+                    time.sleep(wait)
+            raise RuntimeError("[NIM] all retries exhausted")
+        finally:
+            self._sems[idx].release()
+
+    def chat(self, messages_list, sampling_params):
+        temperature = getattr(sampling_params, 'temperature', 0)
+        max_tokens = getattr(sampling_params, 'max_tokens', 512)
+        stop_ids = getattr(sampling_params, 'stop_token_ids', []) or []
+        stop_strs = [_STOP_ID_TO_STR[sid] for sid in stop_ids if sid in _STOP_ID_TO_STR]
+
+        results = [None] * len(messages_list)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
+            futures = {
+                ex.submit(self._call_one, msgs, temperature, max_tokens, stop_strs): i
+                for i, msgs in enumerate(messages_list)
+            }
+            for fut in as_completed(futures):
+                results[futures[fut]] = fut.result()
+        return results
+
+# A minimal SamplingParams shim so callers don't need vllm when using NIM.
+class _SamplingParams:
+    def __init__(self, temperature=0, stop_token_ids=None, max_tokens=512, logprobs=None):
+        self.temperature = temperature
+        self.stop_token_ids = stop_token_ids or []
+        self.max_tokens = max_tokens
+        self.logprobs = logprobs
+
+if not _VLLM_AVAILABLE:
+    SamplingParams = _SamplingParams
+sys.path.insert(0, "/root/rag/src")
 from belief.obs_extractor import E5Embedder, extract_observation
 from belief.belief_state import BeliefState
 POST_BATCH_SIZE = 2048
@@ -99,6 +206,7 @@ def get_args():
     parser.add_argument('--stop_token_id', type=int, default=128009, help="eos token id to stop.")
     parser.add_argument('--num_of_docs', type=int, default=12, help="eos token id to stop.")
     parser.add_argument('--tp', type=int, default=1, help="tensor_parallel_size for vllm (default 1 for single GPU).")
+    parser.add_argument('--gpu_memory_utilization', type=float, default=0.65, help="vllm gpu memory utilization.")
     parser.add_argument('--log_dir', type=str, default='~/logs')
     parser.add_argument('--datasets', type=str, default='2wikimultihopqa,hotpotqa,musique',
                         help="Comma-separated list of datasets to evaluate.")
@@ -111,19 +219,32 @@ def get_args():
     parser.add_argument('--use_belief', action='store_true', default=False,
                         help="Enable belief-guided doc selection (variable k based on Beta-Bernoulli confidence).")
     parser.add_argument('--belief_threshold', type=float, default=0.70,
-                        help="Confidence threshold above which doc count is halved.")
+                        help="(Legacy) kept for backwards compat.")
+    parser.add_argument('--belief_saturation_threshold', type=float, default=0.45,
+                        help="ret_quality below this → retrieval saturated → stop / reduce docs. "
+                             "With novelty semantics: low = redundant new docs = time to stop.")
     parser.add_argument('--e5_model_path', type=str, default=None,
                         help="Path to e5-base-v2 model (required when --use_belief). "
                              "If not set, inferred as $HOME/models/e5-base-v2.")
+    parser.add_argument('--no_rerank', action='store_true', default=False,
+                        help="Disable cross-turn evidence pool reranking (ablation).")
+    parser.add_argument('--use_hyde', action='store_true', default=False,
+                        help="HyDE: for turn>=2, replace sub-query with hypothetical passage before retrieval.")
+    parser.add_argument('--nim_keys_file', type=str, default=None,
+                        help="JSON file with list of NVIDIA NIM API keys. When set, uses NIM instead of local vllm.")
+    parser.add_argument('--nim_model', type=str, default='meta/llama-3.1-8b-instruct',
+                        help="NIM model name (used when --nim_keys_file is set).")
+    parser.add_argument('--nim_workers', type=int, default=None,
+                        help="ThreadPoolExecutor workers for NIM (default: 2x num_keys, max 40).")
     args = parser.parse_args()
     return args
 
 def _belief_doc_k(record: dict, args) -> int:
-    """Return doc count for this record based on belief confidence.
+    """Return doc count based on retrieval saturation.
 
-    When use_belief is off, or belief has not yet been updated (step==0),
-    always return the full num_passages_one_retrieval.
-    Above belief_threshold confidence, halve the doc count (min 3).
+    With novelty semantics: ret_quality tracks how novel recent retrieval has been.
+    Low ret_quality = retrieval is saturated (redundant docs) → reduce k to avoid
+    diluting context with near-duplicate passages.
     """
     max_k = record['num_passages_one_retrieval']
     if not args.use_belief:
@@ -131,10 +252,37 @@ def _belief_doc_k(record: dict, args) -> int:
     belief = record.get('belief')
     if belief is None or belief.step == 0:
         return max_k
-    confidence = belief.ret_quality   # E[θ_ret] = _ret_alpha / (_ret_alpha + _ret_beta)
-    if confidence >= args.belief_threshold:
+    if belief.ret_quality < args.belief_saturation_threshold:
         return max(3, max_k // 2)
     return max_k
+
+
+def _rerank_pool_by_score(evidence_pool: dict, evidence_pool_scores: dict, top_k: int) -> list:
+    """[LEGACY] Return top_k doc contents ranked by retriever score.
+    # Old algo: simple global score ranking; replaced by RRF (Task 4).
+    """
+    scored = [
+        (evidence_pool_scores.get(doc_id, 0.0), evidence_pool[doc_id])
+        for doc_id in evidence_pool
+    ]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [contents for _, contents in scored[:top_k]]
+
+
+def _rrf_rerank_pool(evidence_pool: dict, evidence_pool_ranks: dict, top_k: int) -> list:
+    """Task 4: RRF cross-turn reranking.
+
+    RRF_Score(d) = Σ_q  1 / (60 + rank_q(d))
+    Docs appearing in multiple turns at high rank float to the top,
+    giving more stable multi-hop context than single-turn score sorting.
+    """
+    K_RRF = 60
+    rrf_scores = {}
+    for doc_id in evidence_pool:
+        ranks = evidence_pool_ranks.get(doc_id, [])
+        rrf_scores[doc_id] = sum(1.0 / (K_RRF + r) for r in ranks) if ranks else 0.0
+    sorted_ids = sorted(evidence_pool.keys(), key=lambda d: rrf_scores[d], reverse=True)
+    return [evidence_pool[doc_id] for doc_id in sorted_ids[:top_k]]
 
 
 def split_query_remote(split_url, querys : list):
@@ -150,6 +298,24 @@ def split_query_remote(split_url, querys : list):
             res.extend([[query] for query in subset])
             print(f"Fail info: {response.text}")
             print(f"Failed to split query:{i} ~ {i + POST_BATCH_SIZE}!!!!!!!!!!")
+    return res
+
+def hyde_query_remote(split_url: str, querys: list) -> list:
+    """Call /hyde_passage on the split server to get hypothetical passages."""
+    hyde_url = split_url.replace("/split_query", "/hyde_passage")
+    res = []
+    for i in range(0, len(querys), POST_BATCH_SIZE):
+        subset = querys[i:i + POST_BATCH_SIZE]
+        for _ in range(SSL_RETRY):
+            response = requests.post(
+                hyde_url, json={"querys": subset},
+                headers={"Content-Type": "application/json"},
+            )
+            if response.status_code == 200 and response.json().get("passages"):
+                res.extend(response.json()["passages"])
+                break
+        else:
+            res.extend(subset)  # fallback: use original query
     return res
 
 def GetRetrieval(retrieve_url, querys):
@@ -209,16 +375,24 @@ def solve(args):
     #     return
 
 def solve_init(args):
-    ckpt = LLM(
-        model=args.model_path,
-        tensor_parallel_size=args.tp,
-    )
+    if args.nim_keys_file:
+        with open(args.nim_keys_file) as f:
+            data = json.load(f)
+        keys = data if isinstance(data, list) else data['api_keys']
+        ckpt = NIMModel(args.nim_model, keys, max_workers=args.nim_workers)
+    else:
+        assert _VLLM_AVAILABLE, "vllm not installed and --nim_keys_file not set"
+        ckpt = LLM(
+            model=args.model_path,
+            tensor_parallel_size=args.tp,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+        )
     print("ckpt is ready.")
 
     records = []
     dataset_names = [d.strip() for d in args.datasets.split(',')]
     for dataset_name in dataset_names:
-        dataset_root = os.environ.get("DATASET_ROOT", "/home/boyuz5/data/flashrag_datasets")
+        dataset_root = os.environ.get("DATASET_ROOT", "/root/data/flashrag_datasets")
         dev_file = args.dev_file
         datas = load_dataset('json', data_files=f"{dataset_root}/{dataset_name}/{dev_file}")['train'].to_dict()
         datas = [
@@ -247,6 +421,12 @@ def solve_init(args):
                             'split_querys' : [],
                             "docs":[],
                             "state": "undo",
+                            "evidence_pool": {},
+                            "evidence_pool_scores": {},
+                            "evidence_pool_ranks": {},        # Task 4: per-doc rank lists for RRF
+                            "belief_prev_ret_quality": None,  # Task 3: for ΔQ tracking
+                            "belief_low_delta_count": 0,      # Task 3: consecutive low-ΔQ counter
+                            "max_turns": args.num_search_one_attempt,
                             **({'belief': BeliefState()} if args.use_belief else {}),
                         }
                         for data in datas
@@ -254,10 +434,15 @@ def solve_init(args):
     return ckpt , records
 
 def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder=None):
-    sampling_params = SamplingParams(temperature=temperature, stop_token_ids=[args.stop_token_id], max_tokens=512)
-    for turn in range(args.num_search_one_attempt):
-        # remain_idxs = [i for i , record in enumerate(records) if 'answer' not in record]
-        remain_idxs = [i for i , record in enumerate(records) if record['state']=='undo']
+    # Task 2: logprobs=5 captures top-5 alternatives per token → logit margin signal.
+    sampling_params = SamplingParams(temperature=temperature, stop_token_ids=[args.stop_token_id], max_tokens=512, logprobs=5)
+    # Extra turns to accommodate hard-question dynamic budget (up to +4 over base).
+    max_possible_turns = args.num_search_one_attempt + 4
+    for turn in range(max_possible_turns):
+        remain_idxs = [
+            i for i, record in enumerate(records)
+            if record['state'] == 'undo' and turn < record.get('max_turns', args.num_search_one_attempt)
+        ]
 
         print(f"Turn {turn + 1}**************************************************")
         print(f"Remain records: {len(remain_idxs)}")
@@ -270,15 +455,20 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
         #     ] for i in remain_idxs
         # ]
         # messages = [ records[i]['messags_list']   for i in remain_idxs]
-        messages = [
-            [
-                {"role": "system","content": "You are a helpful assistant"},
-                {"role": "user","content": records[i]['context']}
-            ] for i in remain_idxs
-        ]
-        outputs = ckpt.chat(messages, sampling_params)
-        outputs = [output.outputs[0].text for output in outputs]
+        messages = []
+        for i in remain_idxs:
+            user_content = records[i]['context']
+            if records[i].get('force_answer'):
+                user_content += "\nYou have retrieved sufficient information. Please provide the final answer now."
+            messages.append([
+                {"role": "system", "content": "You are a helpful assistant"},
+                {"role": "user", "content": user_content},
+            ])
+        raw_outputs = ckpt.chat(messages, sampling_params)
+        outputs = [out.outputs[0].text for out in raw_outputs]
         vals = [split_response(output) for output in outputs]
+        # Task 2: map sample index → per-token logprobs for logit margin signal
+        logprobs_map = {i: raw_outputs[pos].outputs[0].logprobs for pos, i in enumerate(remain_idxs)}
 
         #===============================Split querys===================================
         print(f"Turn{turn+ 1} : Split querys*********************************")
@@ -305,6 +495,13 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
             if val.get('query'):
                 for query in records[i]['split_querys'][-1]:
                     retrive_list.append((i , query))
+
+        # HyDE: for turn>=2, replace sub-queries with hypothetical passages (passage-space encoding)
+        if args.use_hyde and args.split_url and turn >= 1 and retrive_list:
+            raw_queries = [q for _, q in retrive_list]
+            hyde_passages = hyde_query_remote(args.split_url, raw_queries)
+            retrive_list = [(i, hyp) for (i, _), hyp in zip(retrive_list, hyde_passages)]
+            print(f"[HyDE] Turn {turn+1}: replaced {len(retrive_list)} queries with hypothetical passages")
         
         if distractor_ctx is not None:
             doc_list = []
@@ -335,12 +532,16 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
         # Build doc_dict and score_dict; apply belief-guided doc count
         doc_dict = {}
         score_dict = {}
-        id_order = {}   # i → score-ordered list of selected ids
+        id_order = {}       # i → score-ordered list of selected ids
+        background_dict = {}  # Task 1: i → full doc list (top-100) for Z-score calibration
         for doc, (i, query) in zip(doc_list, retrive_list):
             k = _belief_doc_k(records[i], args)
             selected = doc[:k]
             if i not in id_order:
                 id_order[i] = []
+            if i not in background_dict:
+                background_dict[i] = []
+            background_dict[i].extend(doc)   # full retrieval result before top-k slice
             for d in selected:
                 if d['id'] not in doc_dict:   # dedup across sub-queries
                     id_order[i].append(d['id'])
@@ -349,6 +550,14 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
 
         for i, ids in id_order.items():
             records[i]['docs'].append([doc_dict[id] for id in ids])
+            # Accumulate evidence pool AFTER saving this turn's docs list.
+            # Pool is used for novelty computation in the NEXT turn.
+            for rank, doc_id in enumerate(ids):
+                if doc_id not in records[i]['evidence_pool']:
+                    records[i]['evidence_pool'][doc_id] = doc_dict[doc_id]
+                # Task 4: track every rank occurrence (same doc can appear in multiple turns)
+                records[i]['evidence_pool_ranks'].setdefault(doc_id, []).append(rank)
+                records[i]['evidence_pool_scores'][doc_id] = score_dict.get(doc_id, 0.0)
 
         #===============================Update BeliefState==============================
         if embedder is not None and args.use_belief:
@@ -357,10 +566,15 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
                 belief = records[i].get('belief')
                 if belief is None:
                     continue
-                # Pass scores so obs_extractor uses real E5 cosine sim (not mid-range fallback)
                 retrieved_docs = [
-                    {'id': id, 'contents': doc_dict[id], 'score': score_dict.get(id, 0.72)}
-                    for id in ids
+                    {'id': doc_id, 'contents': doc_dict[doc_id], 'score': score_dict.get(doc_id, 0.72)}
+                    for doc_id in ids
+                ]
+                # Pool docs from PREVIOUS turns (before this turn was accumulated)
+                prev_pool_docs = [
+                    {'contents': records[i]['evidence_pool'][doc_id]}
+                    for doc_id in records[i]['evidence_pool']
+                    if doc_id not in ids
                 ]
                 last_query = records[i]['split_querys'][-1][0] if records[i]['split_querys'] else records[i]['problem']
                 obs = extract_observation(
@@ -369,8 +583,45 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
                     embedder=embedder,
                     response_dict=val_map.get(i),
                     split_queries=records[i]['split_querys'][-1] if records[i]['split_querys'] else None,
+                    pool_docs=prev_pool_docs,
+                    background_docs=background_dict.get(i),       # Task 1: Z-score calibration
+                    logprobs_per_token=logprobs_map.get(i),        # Task 2: logit margin
                 )
                 belief.update(**obs)
+
+                # Task 3: Exponential budget — harder retrieval problems get more turns.
+                # extra = round(exp(λ · Deficit)) - 1,  λ=1.5
+                # Deficit = max(0, 1 - ret_quality): how far below perfect retrieval we are.
+                # -1 correction: deficit=0 → extra=0 (no expansion); deficit=0.7 → extra=2.
+                # [OLD formula]: round(1.0 * exp(1.5 * deficit)) → always extra>=1 (v1 bug recurrence).
+                if belief.step == 1:
+                    deficit = max(0.0, 1.0 - belief.ret_quality)
+                    extra = min(4, max(0, round(math.exp(1.5 * deficit)) - 1))
+                    records[i]['max_turns'] = args.num_search_one_attempt + extra
+                    print(f"[BeliefBudget] sample {i}: ret_quality={belief.ret_quality:.3f} deficit={deficit:.3f} extra={extra} → max_turns={records[i]['max_turns']}")
+
+                # Task 3: Dual-condition early stopping.
+                # Track ΔQ = change in ret_quality across turns for Condition B.
+                prev_rq = records[i]['belief_prev_ret_quality']
+                if prev_rq is not None:
+                    delta_q = abs(belief.ret_quality - prev_rq)
+                    if delta_q < 0.05:
+                        records[i]['belief_low_delta_count'] += 1
+                    else:
+                        records[i]['belief_low_delta_count'] = 0
+                records[i]['belief_prev_ret_quality'] = belief.ret_quality
+
+                # Condition A: LLM is confident (high logit margin → decisive answers).
+                # Threshold 0.92 (was 0.85) reduces false positives that hurt -0.4pt in v3.
+                # [OLD ALGO]: belief.ret_quality < args.belief_saturation_threshold
+                if belief.step >= 1 and belief.llm_reliability > 0.92:
+                    records[i]['force_answer'] = True
+                    print(f"[BeliefStop-A] sample {i} turn {turn+1}: llm_reliability={belief.llm_reliability:.3f} > 0.85 → confident, force answer")
+
+                # Condition B: Retrieval saturated — ΔQ < 0.05 for 2 consecutive turns.
+                elif belief.step >= 2 and records[i]['belief_low_delta_count'] >= 2:
+                    records[i]['force_answer'] = True
+                    print(f"[BeliefStop-B] sample {i} turn {turn+1}: ΔQ<0.05 for {records[i]['belief_low_delta_count']} turns → saturated, force answer")
 
         #===============================Update context===================================
         print(f"Turn{turn+ 1} : Update context*********************************")
@@ -390,10 +641,21 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
                 records[i]['state'] = 'done'
             elif val.get('query'):
                 step = f"Step {turn + 1}:\nThe problem analysis: {val['analysis']}\nThe retrieval query: {val['query']}"
-                doc_str = "\n".join(records[i]['docs'][-1])
+                # Cross-turn evidence re-ranking: show the globally most relevant docs
+                # (by retriever score) from the accumulated pool rather than only this
+                # turn's docs. Prevents multi-hop evidence from earlier turns being buried.
+                if args.use_belief and not args.no_rerank and records[i]['evidence_pool']:
+                    # Task 4: RRF cross-turn reranking (replaces _rerank_pool_by_score)
+                    top_docs = _rrf_rerank_pool(
+                        records[i]['evidence_pool'],
+                        records[i]['evidence_pool_ranks'],
+                        records[i]['num_passages_one_retrieval'],
+                    )
+                    doc_str = "\n".join(top_docs)
+                else:
+                    doc_str = "\n".join(records[i]['docs'][-1])
                 records[i]['context'] += "\n"+step+"\n"+f"The retrieval documents: {doc_str}"
-                # records[i]['messags_list'].append({"role": "assistant", "content": f"{step}"})     
-                if turn==(args.num_search_one_attempt-1):
+                if turn == records[i].get('max_turns', args.num_search_one_attempt) - 1:
                     records[i]['state'] = 'fail'
                 # else:
                 #     records[i]['messags_list'].append({"role": "user", "content": f"The retrieval documents: {doc_str}"})
@@ -424,8 +686,10 @@ def re_init_no_answer_records(records):
                 # ],
                 'split_querys' : [],
                 "docs":[],
+                "evidence_pool": {},
+                "evidence_pool_scores": {},
+                "max_turns": record.get('max_turns', 10),
             }
-            # 把record重置为dict_tmp
             record.clear()
             record.update(dict_tmp)
 

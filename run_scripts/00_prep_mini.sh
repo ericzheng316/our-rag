@@ -6,7 +6,7 @@
 
 set -e
 
-DATASET_ROOT=/home/boyuz5/data/flashrag_datasets
+DATASET_ROOT=/root/data/flashrag_datasets
 CORPUS_DIR=${DATASET_ROOT}/retrieval-corpus
 MINI_N_DEV=200
 MINI_N_CORPUS=100000
@@ -24,7 +24,7 @@ else
 fi
 
 # --- Mini wiki corpus ---
-SRC=${CORPUS_DIR}/wiki18_100w_clean.jsonl
+SRC=${CORPUS_DIR}/wiki18_100w.jsonl
 DST=${CORPUS_DIR}/wiki18_mini.jsonl
 if [ -f "${DST}" ]; then
     echo "  wiki18_mini.jsonl 已存在，跳过 ($(wc -l < ${DST}) 条)"

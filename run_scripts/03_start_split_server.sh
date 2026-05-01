@@ -6,14 +6,14 @@ set -e
 
 HOST=$(hostname -I | awk '{print $1}')
 PORT=8002
-MODEL=/home/boyuz5/models/Qwen2.5-7B-Instruct
+MODEL=/root/models/Qwen2.5-7B-Instruct
 
 echo "[$(date)] 启动 split query 服务（Qwen2.5-7B），地址: http://${HOST}:${PORT}"
-echo "SPLIT_HOST=${HOST}" >> /home/boyuz5/run_scripts/.env_retriever
+echo "SPLIT_HOST=${HOST}" >> /root/run_scripts/.env_retriever
 
-cd /home/boyuz5/rag/benchmark/R3-RAG
+cd /root/rag/benchmark/R3-RAG
 
-CUDA_VISIBLE_DEVICES=0 /home/boyuz5/rag/.venv/bin/python src/split_server.py \
+CUDA_VISIBLE_DEVICES=0 /root/rag/.venv/bin/python src/split_server.py \
     --host ${HOST} \
     --port ${PORT} \
     --model_path ${MODEL} \

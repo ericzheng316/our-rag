@@ -53,7 +53,7 @@ def convert_numpy(obj: Union[Dict, list, np.ndarray, np.generic]) -> Any:
     
 def load_model(model_path: str, use_fp16: bool = False):
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+    model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation="eager")
     model.eval()
     model.cuda()
     if use_fp16:

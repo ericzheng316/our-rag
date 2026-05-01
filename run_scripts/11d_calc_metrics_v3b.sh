@@ -1,19 +1,9 @@
 #!/bin/bash
-# 计算全量 distractor 实验的 EM/F1 指标
-# 用法:
-#   BELIEF=1 bash 08_calc_metrics_full.sh   -> belief run
-#   bash 08_calc_metrics_full.sh             -> baseline run
+# 计算 belief v3b 的指标
 
 SPLIT_MODEL=/root/models/Qwen2.5-7B-Instruct
-
-if [ "${BELIEF:-0}" = "1" ]; then
-    MODEL_NAME="r3rag-qwen-distractor-full-belief"
-    EXP_NAME="full_belief_docs10_adaptive"
-else
-    MODEL_NAME="r3rag-qwen-distractor-full-baseline"
-    EXP_NAME="full_baseline_docs10"
-fi
-
+MODEL_NAME="r3rag-qwen-real-belief-v3b"
+EXP_NAME="belief_v3b"
 LOG_DIR=/root/logs/${MODEL_NAME}
 
 cd /root/rag/benchmark/R3-RAG
@@ -29,4 +19,3 @@ echo "[$(date)] 指标计算完成"
 cat ${LOG_DIR}/metrics.log
 echo ""
 echo "results.json: ${LOG_DIR}/results.json"
-echo "results.csv:  ${LOG_DIR}/results.csv"

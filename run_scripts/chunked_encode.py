@@ -6,8 +6,8 @@ writing results directly to a numpy memmap file.
 Peak CPU RAM: ~3 GB (one chunk at a time).
 GPU VRAM: ~500 MB (E5-base-v2 model).
 
-Output: /home/boyuz5/data/indices/e5_full_emb/embeddings.bin  (fp16, shape: [N, 768])
-        /home/boyuz5/data/indices/e5_full_emb/meta.json       (N, dim, dtype)
+Output: /root/data/indices/e5_full_emb/embeddings.bin  (fp16, shape: [N, 768])
+        /root/data/indices/e5_full_emb/meta.json       (N, dim, dtype)
 """
 
 import json
@@ -20,11 +20,11 @@ from transformers import AutoModel, AutoTokenizer
 from tqdm import tqdm
 
 # ── Config ──────────────────────────────────────────────────────────────────
-CORPUS_PATH  = "/home/boyuz5/data/flashrag_datasets/retrieval-corpus/wiki18_100w_clean.jsonl"
-MODEL_PATH   = "/home/boyuz5/models/e5-base-v2"
-SAVE_DIR     = "/home/boyuz5/data/indices/e5_full_emb"
+CORPUS_PATH  = "/root/data/flashrag_datasets/retrieval-corpus/wiki18_100w.jsonl"
+MODEL_PATH   = "/root/models/e5-base-v2"
+SAVE_DIR     = "/root/data/indices/e5_full_emb"
 CHUNK_SIZE   = 500_000   # passages per chunk  (~0.75 GB fp16 embeddings)
-BATCH_SIZE   = 512       # encoder batch size
+BATCH_SIZE   = 1024      # encoder batch size
 MAX_LEN      = 180
 DIM          = 768
 DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
@@ -71,7 +71,7 @@ def main():
 
     print(f"Loading E5-base-v2 from {MODEL_PATH} onto {DEVICE} …")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    model     = AutoModel.from_pretrained(MODEL_PATH, torch_dtype=torch.float16).to(DEVICE)
+    model     = AutoModel.from_pretrained(MODEL_PATH, dtype=torch.float16, attn_implementation="eager").to(DEVICE)
     model.eval()
 
     t0 = time.time()

@@ -29,6 +29,12 @@ __pycache__/
 *.pt
 *.safetensors
 
+# API Keys — NEVER commit
+nim_keys.json
+
+# 第三方工具（嵌套 git repo，不提交）
+rag/tool/ircot/
+
 # 其他
 .triton/
 .bash_history
