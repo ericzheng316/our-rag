@@ -41,6 +41,7 @@ from belief.obs_extractor import E5Embedder  # noqa: E402
 from belief.acec import (  # noqa: E402
     ACECBeliefState,
     ACECConfig,
+    E5QueryEmbedder,
     GoldEvidenceAdapter,
     get_adapter,
     title_from_content,
@@ -228,7 +229,12 @@ def main() -> None:
 
     os.makedirs(args.out_dir, exist_ok=True)
     adapter = get_adapter(args.dataset)
-    embedder = E5Embedder(args.e5_model_path)
+    # E5 requires a 'query: ' prefix for well-calibrated similarity (see
+    # rag/src/belief/acec/e5_adapter.py) — without it, the action labeler's
+    # cosine routing can't tell unrelated queries apart (diagnosed from the
+    # Week-1 pilot: avg slots spawned was exactly 1.00 across all 500 records
+    # despite K_true=2 always).
+    embedder = E5QueryEmbedder(E5Embedder(args.e5_model_path))
     nli_scorer = (
         CrossEncoderNLIScorer(args.nli_model) if args.nli_model else CosineNLIScorer(embedder)
     )

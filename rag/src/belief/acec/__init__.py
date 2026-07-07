@@ -15,6 +15,7 @@ from .config import ACECConfig
 from .coverage_belief import CoverageBelief, CoverageFeatures
 from .datasets import GoldEvidenceAdapter, get_adapter
 from .docs import doc_title, title_from_content
+from .e5_adapter import E5QueryEmbedder
 from .entity_binding import augment_hypothesis_with_bound_entities
 from .hypothesis import query_to_hypothesis
 from .k_posterior import KPosterior, KPredictor, SplitCountKPredictor, UniformKPredictor
@@ -38,6 +39,7 @@ __all__ = [
     "BetaDensity",
     "CoverageBelief",
     "CoverageFeatures",
+    "E5QueryEmbedder",
     "Embedder",
     "GoldEvidenceAdapter",
     "HitRateBeta",
