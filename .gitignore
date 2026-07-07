@@ -44,16 +44,28 @@ rag/tool/ircot/
 # macOS
 .DS_Store
 
-# rag/{data,log,model} scaffold — keep the empty directory path (via .gitkeep),
-# ignore everything actually downloaded/generated into it (datasets, run logs,
-# model weights) so those never get committed.
+# models/ + logs/ scaffold (repo root, matching what run_scripts/*.sh actually
+# hardcode: $HOME/models, $HOME/logs) — keep the empty directory path (via
+# .gitkeep), ignore everything actually downloaded/generated into it (model
+# weights, run logs) so those never get committed. Needs an explicit !dir/
+# re-inclusion first since models/ and logs/ are already blanket-ignored above.
+!models/
+models/*
+!models/.gitkeep
+!logs/
+logs/*
+!logs/.gitkeep
+
+# rag/data/ scaffold for datasets — same pattern, cascaded one level deeper
+# to keep rag/data/dataset/hotpotqa/ specifically.
 !rag/data/
 rag/data/*
 !rag/data/.gitkeep
-rag/log/*
-!rag/log/.gitkeep
-rag/model/*
-!rag/model/.gitkeep
+!rag/data/dataset/
+rag/data/dataset/*
+!rag/data/dataset/hotpotqa/
+rag/data/dataset/hotpotqa/*
+!rag/data/dataset/hotpotqa/.gitkeep
 
 # Runtime-generated, per-machine (written by 02_start_retriever.sh /
 # 03_start_split_server.sh with that machine's actual IP) — never a source

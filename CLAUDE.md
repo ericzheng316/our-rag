@@ -34,9 +34,13 @@ baseline; do not treat its prior findings as guidance for new work.
 - `rag/src/belief/acec/` — see above.
 - `rag/legacy/` — archived, not part of the active pipeline (currently: an
   old Gradio demo). See its README before reviving anything there.
-- `rag/{data,log,model}/` — local scaffold directories (gitignored contents,
-  `.gitkeep`-only in git) for datasets, run logs, and downloaded model
-  weights respectively.
+- `models/`, `logs/` (repo root) and `rag/data/dataset/hotpotqa/` — local
+  scaffold directories, always present (via `.gitkeep`) but gitignored past
+  that, so a fresh clone/instance never needs `mkdir` before downloading
+  models/datasets or running inference. Matches what `run_scripts/*.sh`
+  actually hardcode (`$HOME/models`, `$HOME/logs`); `DATASET_ROOT` needs to
+  be overridden to point at `rag/data/dataset` if you use that path instead
+  of a script's own default.
 - `experiments/` — small, versioned per-run results (metrics + notes), not
   raw logs. See its README for the convention.
 - `run_scripts/.env_retriever` is runtime-generated per machine (by
