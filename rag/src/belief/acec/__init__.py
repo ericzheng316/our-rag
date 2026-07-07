@@ -14,6 +14,7 @@ from .belief_state import ACECBeliefState, NLIScorer, TurnResult
 from .config import ACECConfig
 from .coverage_belief import CoverageBelief, CoverageFeatures
 from .datasets import GoldEvidenceAdapter, get_adapter
+from .hypothesis import query_to_hypothesis
 from .k_posterior import KPosterior, KPredictor, SplitCountKPredictor, UniformKPredictor
 from .observation_model import BetaDensity, HitRateBeta, ObservationModel
 from .reward import (
@@ -52,6 +53,7 @@ __all__ = [
     "gold_coverage_reward",
     "per_turn_reward",
     "potential_shaped_reward",
+    "query_to_hypothesis",
     "turn_level_advantages",
     "turn_level_returns",
 ]

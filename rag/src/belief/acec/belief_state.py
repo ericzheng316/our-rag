@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence
 from .action_labeler import ActionLabel, ActionLabeler, ActionMode, Embedder
 from .config import ACECConfig
 from .coverage_belief import CoverageBelief, CoverageFeatures
+from .hypothesis import query_to_hypothesis
 from .k_posterior import KPredictor, UniformKPredictor
 from .observation_model import ObservationModel
 from .reward import efficiency_penalty, potential_shaped_reward
@@ -91,7 +92,8 @@ class ACECBeliefState:
         action = self.labeler.label(query or "", slot_hyps)
 
         if action.mode == ActionMode.DECOMPOSE:
-            new_idx = cb.spawn_slot(hypothesis=query or f"unresolved sub-question {len(cb.slots) + 1}")
+            hypothesis = query_to_hypothesis(query) if query else f"unresolved sub-question {len(cb.slots) + 1}"
+            new_idx = cb.spawn_slot(hypothesis=hypothesis)
             self.labeler.register_new_slot_query(new_idx, query or "")
             action = ActionLabel(ActionMode.DECOMPOSE, new_idx)
 
