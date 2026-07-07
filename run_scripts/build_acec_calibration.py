@@ -84,9 +84,17 @@ class CrossEncoderNLIScorer:
         from sentence_transformers import CrossEncoder
 
         self.model = CrossEncoder(model_name)
-        # Most nli-* CrossEncoder checkpoints order labels
-        # [contradiction, neutral, entailment] — entailment is last.
-        self._entail_idx = -1
+        # sentence-transformers' own convention for its cross-encoder/nli-*
+        # model family (see their CrossEncoder usage docs):
+        #   label_mapping = ['contradiction', 'entailment', 'neutral']
+        # i.e. entailment is index 1, NOT the last index — the previous
+        # self._entail_idx = -1 was silently reading off P(neutral) instead
+        # of P(entailment) the entire time. This is the most likely
+        # explanation for the Week-1 pilot's per-slot hit AUC staying stuck
+        # *below* 0.5 (not just weak, systematically wrong-direction) across
+        # every other fix (num_of_docs, declarative hypotheses, entity
+        # binding, E5 query prefix, tau_new sweep) — none of them touch this.
+        self._entail_idx = 1
 
     def score(self, premise: str, hypothesis: str) -> float:
         probs = self.model.predict([(premise, hypothesis)], apply_softmax=True)[0]
