@@ -40,3 +40,6 @@ rag/tool/ircot/
 .bash_history
 .bashrc
 .config/
+
+# macOS
+.DS_Store

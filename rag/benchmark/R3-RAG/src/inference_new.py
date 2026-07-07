@@ -411,6 +411,11 @@ def solve_init(args):
                             'dataset' : dataset_name,
                             'problem' : data['question'],
                             'golden_answers' : data['golden_answers'],
+                            # HotpotQA gold {'title': [...], 'sent_id': [...]} — distant
+                            # supervision for ACEC's offline hit-label calibration
+                            # (rag/src/belief/acec/offline_fit.py). None outside distractor
+                            # mode / when prep_full_distractor.py predates this field.
+                            'supporting_facts' : data.get('supporting_facts'),
                             'num_passages_one_split_retrieval' : num_passages_one_split_retrieval,
                             'num_passages_one_retrieval' : num_passages_one_retrieval,
                             'split' : split,

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acec-belief"
+version = "0.1.0"
+description = "ACEC-Belief RAG: action-conditioned evidence-coverage belief for agentic multi-hop RAG"
+requires-python = ">=3.10"
+# Core belief math (config/slots/action_labeler/k_posterior/observation_model/
+# coverage_belief/reward/belief_state) only needs numpy — everything else here
+# is an optional extra pulled in only if you plug in a real embedder/NLI scorer.
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Real E5Embedder (rag/src/belief/obs_extractor.py-style) for ActionLabeler /
+# EmpiricalKPredictor instead of a hand-rolled Embedder.
+encoder = [
+    "torch>=2.0",
+    "transformers>=4.30",
+]
+# Calibrated NLI cross-encoder observation model (design doc Section 1.2/2.2),
+# e.g. cross-encoder/nli-deberta-v3-base or MiniLM.
+nli = [
+    "sentence-transformers>=2.2",
+]
+# offline_fit.py end-to-end + belief_state.py smoke test.
+dev = [
+    "pytest>=7.0",
+]
+full = [
+    "acec-belief[encoder,nli,dev]",
+]
+
+[tool.setuptools]
+packages = ["acec", "acec.datasets"]
+package-dir = { "acec" = "." }
