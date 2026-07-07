@@ -121,7 +121,10 @@ def match_slots_to_sf(
 
 
 def replay_record(
-    record: Dict[str, Any], belief: ACECBeliefState, adapter: GoldEvidenceAdapter
+    record: Dict[str, Any],
+    belief: ACECBeliefState,
+    adapter: GoldEvidenceAdapter,
+    debug_records: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[HitExample], Optional[KExample]]:
     sf_titles = adapter.gold_titles(record)
     question = record["problem"]
@@ -142,6 +145,7 @@ def replay_record(
     slot_to_sf = match_slots_to_sf(slot_hyps, sf_titles, belief.labeler.embedder)
 
     examples: List[HitExample] = []
+    debug_turns: List[Dict[str, Any]] = []
     for t, result in per_turn:
         docs = docs_per_turn[t]
         doc_titles = {recover_title(d) for d in docs}
@@ -153,6 +157,31 @@ def replay_record(
             bound = belief.coverage_belief.slots[j].bound
             is_hit = sf_title in doc_titles
             examples.append(HitExample(result.action.mode.value, role, bound, m, is_hit))
+            if debug_records is not None:
+                debug_turns.append(
+                    {
+                        "turn": t,
+                        "action_mode": result.action.mode.value,
+                        "role": role,
+                        "slot_idx": j,
+                        "slot_hypothesis": slot_hyps[j] if j < len(slot_hyps) else None,
+                        "matched_sf_title": sf_title,
+                        "doc_titles": sorted(doc_titles),
+                        "nli_score": m,
+                        "is_hit": is_hit,
+                    }
+                )
+
+    if debug_records is not None:
+        debug_records.append(
+            {
+                "question": question,
+                "sf_titles": sf_titles,
+                "slot_hypotheses": slot_hyps,
+                "slot_to_sf": slot_to_sf,
+                "turns": debug_turns,
+            }
+        )
 
     k_example = None
     if sf_titles:
@@ -182,6 +211,19 @@ def main() -> None:
         "HotpotQA is the only one implemented today; add a module there for "
         "2WikiMultiHopQA / MuSiQue-Ans / Bamboogle when those runs start.",
     )
+    ap.add_argument(
+        "--debug_dump",
+        default=None,
+        help="Optional path to write a JSONL of per-record diagnostics (slot "
+        "hypotheses, matched SF titles, doc titles, NLI scores, hit labels) "
+        "for manual inspection when the gate result looks off.",
+    )
+    ap.add_argument(
+        "--debug_dump_limit",
+        type=int,
+        default=50,
+        help="Max number of records to write to --debug_dump.",
+    )
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -206,25 +248,41 @@ def main() -> None:
     n_held = max(1, int(len(records) * args.held_out_frac))
     held_out, fit_split = records[:n_held], records[n_held:]
 
-    def run_split(split):
+    debug_records: Optional[List[Dict[str, Any]]] = [] if args.debug_dump else None
+
+    def run_split(split, collect_debug: bool):
         all_examples, all_k = [], []
         for record in split:
             if not adapter.gold_titles(record) or not record.get("docs"):
                 continue
-            examples, k_example = replay_record(record, belief, adapter)
+            dbg = debug_records if (collect_debug and debug_records is not None and len(debug_records) < args.debug_dump_limit) else None
+            examples, k_example = replay_record(record, belief, adapter, debug_records=dbg)
             all_examples.extend(examples)
             if k_example is not None:
                 all_k.append(k_example)
         return all_examples, all_k
 
-    fit_examples, fit_k = run_split(fit_split)
-    held_examples, held_k = run_split(held_out)
+    fit_examples, fit_k = run_split(fit_split, collect_debug=True)
+    held_examples, held_k = run_split(held_out, collect_debug=True)
     print(f"Fit split: {len(fit_split)} records -> {len(fit_examples)} hit examples, {len(fit_k)} K examples")
     print(f"Held-out split: {len(held_out)} records -> {len(held_examples)} hit examples, {len(held_k)} K examples")
+
+    if args.debug_dump and debug_records:
+        with open(args.debug_dump, "w", encoding="utf-8") as f:
+            for rec in debug_records:
+                json.dump(rec, f, ensure_ascii=False)
+                f.write("\n")
+        print(f"Wrote {len(debug_records)} debug records to {args.debug_dump}")
 
     model, hit_rates = fit_observation_model(fit_examples)
     held_auc = evaluate_hit_auc(held_examples)
     fit_auc = evaluate_hit_auc(fit_examples)
+
+    for role in ("tgt", "inc"):
+        role_examples = [ex for ex in held_examples if ex.role == role]
+        n_hit = sum(1 for ex in role_examples if ex.is_hit)
+        role_auc = evaluate_hit_auc(role_examples)
+        print(f"  [debug] held-out role={role}: n={len(role_examples)}, hits={n_hit}, AUC={role_auc:.3f}")
 
     k_predictor = EmpiricalKPredictor(args.k_max, fit_k)
     held_k_acc = k_predictor.evaluate_k_accuracy(held_k)
