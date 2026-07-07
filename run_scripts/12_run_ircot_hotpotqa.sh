@@ -21,7 +21,7 @@ echo "  output:    ${OUTPUT_FILE}"
 echo "  log:       ${LOG_DIR}/inference.log"
 
 CUDA_VISIBLE_DEVICES=0 /root/rag/.venv/bin/python \
-    /root/rag/run_scripts/ircot_inference.py \
+    /root/run_scripts/ircot_inference.py \
     --model_path   ${MODEL} \
     --retrieve_url http://${HOST}:8001/search \
     --dev_file     ${DATASET_ROOT}/hotpotqa/dev.jsonl \
@@ -33,7 +33,7 @@ CUDA_VISIBLE_DEVICES=0 /root/rag/.venv/bin/python \
     2>&1 | tee ${LOG_DIR}/inference.log
 
 echo "[$(date)] 推理完成，开始计算 metrics"
-/root/rag/.venv/bin/python /root/rag/run_scripts/ircot_eval.py \
+/root/rag/.venv/bin/python /root/run_scripts/ircot_eval.py \
     --records_file ${OUTPUT_FILE} \
     --output_dir   ${LOG_DIR}
 
