@@ -2,7 +2,7 @@
 Merge flashrag dev.jsonl + HF distractor dev.jsonl into a single file
 with distractor_paras field, suitable for distractor-mode inference.
 
-Output: /root/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl
+Output: $HOME/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl
 Fields: id, question, golden_answers, metadata, distractor_paras,
         distractor_titles, supporting_facts
 
@@ -14,10 +14,12 @@ inference_new.py's records.jsonl could never support that calibration step).
 """
 
 import json
+import os
 
-FLASHRAG_PATH = "/root/data/flashrag_datasets/hotpotqa/dev.jsonl"
-HF_PATH = "/root/data/datasets/hotpotqa/distractor_jsonl/dev.jsonl"
-OUTPUT_PATH = "/root/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl"
+_HOME = os.path.expanduser("~")
+FLASHRAG_PATH = os.path.join(_HOME, "data/flashrag_datasets/hotpotqa/dev.jsonl")
+HF_PATH = os.path.join(_HOME, "data/datasets/hotpotqa/distractor_jsonl/dev.jsonl")
+OUTPUT_PATH = os.path.join(_HOME, "data/flashrag_datasets/hotpotqa/dev_distractor.jsonl")
 
 
 def hf_context_to_paras(context: dict) -> tuple[list[str], list[str]]:
