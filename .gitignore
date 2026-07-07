@@ -40,3 +40,33 @@ rag/tool/ircot/
 .bash_history
 .bashrc
 .config/
+
+# macOS
+.DS_Store
+
+# data/, models/, logs/ scaffold — all three are repo-root siblings of rag/,
+# matching what run_scripts/*.sh actually hardcode ($HOME/data/flashrag_datasets,
+# $HOME/models, $HOME/logs — $HOME == repo root on the cluster). Keep the empty
+# directory path (via .gitkeep), ignore everything actually downloaded/generated
+# into it (datasets, model weights, run logs) so those never get committed.
+# Needs an explicit !dir/ re-inclusion first since data/, models/, logs/ are
+# already blanket-ignored above; data/ cascades one level deeper to keep
+# data/flashrag_datasets/hotpotqa/ specifically.
+!data/
+data/*
+!data/flashrag_datasets/
+data/flashrag_datasets/*
+!data/flashrag_datasets/hotpotqa/
+data/flashrag_datasets/hotpotqa/*
+!data/flashrag_datasets/hotpotqa/.gitkeep
+!models/
+models/*
+!models/.gitkeep
+!logs/
+logs/*
+!logs/.gitkeep
+
+# Runtime-generated, per-machine (written by 02_start_retriever.sh /
+# 03_start_split_server.sh with that machine's actual IP) — never a source
+# file, shouldn't be committed.
+run_scripts/.env_retriever

@@ -114,7 +114,8 @@ class _SamplingParams:
 
 if not _VLLM_AVAILABLE:
     SamplingParams = _SamplingParams
-sys.path.insert(0, "/root/rag/src")
+_RAG_SRC = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src"))
+sys.path.insert(0, _RAG_SRC)
 from belief.obs_extractor import E5Embedder, extract_observation
 from belief.belief_state import BeliefState
 POST_BATCH_SIZE = 2048
@@ -411,6 +412,11 @@ def solve_init(args):
                             'dataset' : dataset_name,
                             'problem' : data['question'],
                             'golden_answers' : data['golden_answers'],
+                            # HotpotQA gold {'title': [...], 'sent_id': [...]} — distant
+                            # supervision for ACEC's offline hit-label calibration
+                            # (rag/src/belief/acec/offline_fit.py). None outside distractor
+                            # mode / when prep_full_distractor.py predates this field.
+                            'supporting_facts' : data.get('supporting_facts'),
                             'num_passages_one_split_retrieval' : num_passages_one_split_retrieval,
                             'num_passages_one_retrieval' : num_passages_one_retrieval,
                             'split' : split,
