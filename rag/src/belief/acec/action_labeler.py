@@ -56,19 +56,28 @@ class ActionLabeler:
         self.tau_new = tau_new
         self.tau_para = tau_para
         self._last_query_per_slot: Dict[int, str] = {}
+        # Diagnostics only — the max cosine similarity seen at the most
+        # recent label() call (None if there were no existing slots to
+        # compare against). Lets callers inspect what's actually driving the
+        # DECOMPOSE-vs-REWRITE/EXPAND decision without changing label()'s
+        # return type.
+        self.last_max_sim: Optional[float] = None
 
     def label(self, query: str, slot_hypotheses: List[str], is_answer: bool = False) -> ActionLabel:
         if is_answer:
             return ActionLabel(ActionMode.ANSWER, None)
         if not query:
+            self.last_max_sim = None
             return ActionLabel(ActionMode.DECOMPOSE, None)
         if not slot_hypotheses:
+            self.last_max_sim = None
             return ActionLabel(ActionMode.DECOMPOSE, None)
 
         embs = self.embedder.encode([query] + list(slot_hypotheses))
         q_emb, slot_embs = embs[0], embs[1:]
         sims = _cosine_to_matrix(q_emb, slot_embs)
         j = int(np.argmax(sims))
+        self.last_max_sim = float(sims[j])
         if float(sims[j]) < self.tau_new:
             return ActionLabel(ActionMode.DECOMPOSE, None)
 

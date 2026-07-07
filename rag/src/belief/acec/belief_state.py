@@ -42,6 +42,10 @@ class TurnResult:
     # NLI score, gold-hit) table" — offline_fit.py needs these raw scores, not
     # just the aggregated coverage features.
     slot_scores: Dict[int, float] = field(default_factory=dict)
+    # Diagnostics: the max cosine similarity ActionLabeler saw against existing
+    # slots this turn (None if there were none) — exposes what's actually
+    # driving the DECOMPOSE-vs-REWRITE/EXPAND routing decision.
+    label_max_sim: Optional[float] = None
 
 
 class ACECBeliefState:
@@ -92,6 +96,7 @@ class ACECBeliefState:
 
         slot_hyps = [s.hypothesis for s in cb.slots]
         action = self.labeler.label(query or "", slot_hyps)
+        label_max_sim = self.labeler.last_max_sim
 
         if action.mode == ActionMode.DECOMPOSE:
             hypothesis = query_to_hypothesis(query) if query else f"unresolved sub-question {len(cb.slots) + 1}"
@@ -148,6 +153,7 @@ class ACECBeliefState:
             suggested_target_slot=cb.suggest_target_slot(),
             stop_voi=cb.should_stop_voi(),
             slot_scores=slot_scores,
+            label_max_sim=label_max_sim,
         )
 
     # ------------------------------------------------------------------

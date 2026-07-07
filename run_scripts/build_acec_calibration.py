@@ -126,6 +126,7 @@ def replay_record(
     belief: ACECBeliefState,
     adapter: GoldEvidenceAdapter,
     debug_records: Optional[List[Dict[str, Any]]] = None,
+    sim_stats: Optional[List[float]] = None,
 ) -> Tuple[List[HitExample], Optional[KExample]]:
     sf_titles = adapter.gold_titles(record)
     question = record["problem"]
@@ -135,10 +136,25 @@ def replay_record(
     docs_per_turn = record.get("docs", [])
 
     per_turn: List[Tuple[int, Any]] = []
+    routing_debug: List[Dict[str, Any]] = []
     for t, docs in enumerate(docs_per_turn):
         query = split_querys[t][0] if t < len(split_querys) and split_querys[t] else None
+        num_slots_before = len(belief.coverage_belief.slots)
         result = belief.turn(query=query, new_docs=[{"contents": d} for d in docs], is_answer=False)
         per_turn.append((t, result))
+        if sim_stats is not None and result.label_max_sim is not None:
+            sim_stats.append(result.label_max_sim)
+        routing_debug.append(
+            {
+                "turn": t,
+                "query": query,
+                "num_slots_before": num_slots_before,
+                "action_mode": result.action.mode.value,
+                "target_slot": result.action.target_slot,
+                "label_max_sim": result.label_max_sim,
+                "tau_new": belief.config.tau_new,
+            }
+        )
     if "answer" in record and docs_per_turn:
         belief.turn(query=None, new_docs=[], is_answer=True)
 
@@ -180,6 +196,7 @@ def replay_record(
                 "sf_titles": sf_titles,
                 "slot_hypotheses": slot_hyps,
                 "slot_to_sf": slot_to_sf,
+                "routing": routing_debug,
                 "turns": debug_turns,
             }
         )
@@ -256,6 +273,7 @@ def main() -> None:
 
     debug_records: Optional[List[Dict[str, Any]]] = [] if args.debug_dump else None
     slot_coverage_stats: List[Tuple[int, int]] = []  # (num_slots_spawned, k_true)
+    sim_stats: List[float] = []  # every label_max_sim seen, across all records/turns
 
     def run_split(split, collect_debug: bool):
         all_examples, all_k = [], []
@@ -264,7 +282,7 @@ def main() -> None:
             if not sf_titles or not record.get("docs"):
                 continue
             dbg = debug_records if (collect_debug and debug_records is not None and len(debug_records) < args.debug_dump_limit) else None
-            examples, k_example = replay_record(record, belief, adapter, debug_records=dbg)
+            examples, k_example = replay_record(record, belief, adapter, debug_records=dbg, sim_stats=sim_stats)
             slot_coverage_stats.append((len(belief.coverage_belief.slots), len(sf_titles)))
             all_examples.extend(examples)
             if k_example is not None:
@@ -284,6 +302,16 @@ def main() -> None:
             f"  [debug] slot identification: avg slots spawned={avg_slots:.2f}, "
             f"avg K_true={avg_k:.2f}, under-decomposed (spawned < K_true) in "
             f"{under_frac:.1%} of records"
+        )
+
+    if sim_stats:
+        arr = np.array(sim_stats)
+        print(
+            f"  [debug] label_max_sim (all turns with an existing slot to compare "
+            f"against, n={len(arr)}): min={arr.min():.3f} p25={np.percentile(arr, 25):.3f} "
+            f"median={np.median(arr):.3f} p75={np.percentile(arr, 75):.3f} max={arr.max():.3f} "
+            f"| tau_new={ACECConfig().tau_new} "
+            f"| frac >= tau_new (routed REWRITE/EXPAND, not DECOMPOSE)={float((arr >= ACECConfig().tau_new).mean()):.1%}"
         )
 
     if args.debug_dump and debug_records:
