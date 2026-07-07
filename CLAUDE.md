@@ -22,6 +22,13 @@ baseline; do not treat its prior findings as guidance for new work.
   carrying `supporting_facts`, via the `prep_full_distractor.py` /
   `inference_new.py` fixes) through `ACECBeliefState` and check per-slot hit
   AUC / K-accuracy gates before investing further.
+- `14_run_acec_distractor_pilot.sh`'s `NUM_DOCS` (default 3, not the usual 10):
+  a HotpotQA distractor question has exactly 10 candidate paragraphs (2 gold +
+  8 distractor). `--num_of_docs 10` retrieves the whole pool every turn
+  regardless of query quality, making gold-hit labels trivially "always hit"
+  (empirically: pi_a saturates ~1.0 per action mode, AUC becomes meaningless —
+  first pilot run hit exactly this). Keep it below 10 so hit/miss actually
+  depends on the query.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of

@@ -11,7 +11,15 @@
 # to load, so real retrieval mode is infeasible there regardless of GPU size,
 # while this pilot only needs ~16GB VRAM for R3-RAG-Qwen.
 #
-# 用法: MAX_SAMPLES=500 bash 14_run_acec_distractor_pilot.sh
+# NUM_DOCS matters a lot here: a HotpotQA distractor question has exactly 10
+# candidate paragraphs (2 gold + 8 distractor) total. If NUM_DOCS==10, every
+# turn retrieves the entire pool regardless of query quality, so gold-hit
+# labels become trivially "always hit" and the ACEC observation model has
+# nothing to discriminate (empirically: pi_a saturates near 1.0 for every
+# action mode, AUC becomes meaningless). Default here is 3, forcing genuine
+# per-turn selection out of the 10 so hit/miss actually depends on the query.
+#
+# 用法: MAX_SAMPLES=500 NUM_DOCS=3 bash 14_run_acec_distractor_pilot.sh
 
 set -e
 
@@ -22,9 +30,10 @@ MODEL_NAME="r3rag-qwen-distractor-acec-pilot"
 LOG_DIR=$HOME/logs/${MODEL_NAME}
 DISTRACTOR_FILE="${DATASET_ROOT}/hotpotqa/dev_distractor.jsonl"
 MAX_SAMPLES=${MAX_SAMPLES:-500}
+NUM_DOCS=${NUM_DOCS:-3}
 
 mkdir -p ${LOG_DIR}
-echo "[$(date)] ACEC pilot: hotpotqa distractor, ${MAX_SAMPLES} samples, docs=10, no belief"
+echo "[$(date)] ACEC pilot: hotpotqa distractor, ${MAX_SAMPLES} samples, docs=${NUM_DOCS}, no belief"
 echo "  log: ${LOG_DIR}/inference.log"
 
 cd $HOME/rag/benchmark/R3-RAG
@@ -35,7 +44,7 @@ $HOME/rag/.venv/bin/python src/inference_new.py \
     --log_dir ${LOG_DIR} \
     --num_search_one_attempt 5 \
     --stop_token_id ${STOP_TOKEN_ID} \
-    --num_of_docs 10 \
+    --num_of_docs ${NUM_DOCS} \
     --tp 1 \
     --datasets hotpotqa \
     --dev_file dev_distractor.jsonl \
