@@ -223,6 +223,18 @@ def main() -> None:
     ap.add_argument("--held_out_frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
+        "--tau_new",
+        type=float,
+        default=ACECConfig().tau_new,
+        help="ActionLabeler DECOMPOSE-vs-REWRITE/EXPAND cosine threshold (design "
+        "doc default 0.55, but that was never calibrated against real E5 output — "
+        "the Week-1 pilot found E5-with-query-prefix cosine similarity between "
+        "genuinely different sub-questions in the same HotpotQA question starts "
+        "around 0.66, so 0.55 never once triggered DECOMPOSE past the first slot. "
+        "Sweep this (e.g. 0.75/0.85/0.92/0.95) and watch the "
+        "'avg slots spawned' / 'frac >= tau_new' diagnostics below.",
+    )
+    ap.add_argument(
         "--dataset",
         default="hotpotqa",
         help="Gold-evidence adapter name (rag/src/belief/acec/datasets/). "
@@ -259,7 +271,7 @@ def main() -> None:
         print("[WARN] No --nli_model given — using E5-cosine stand-in. "
               "Treat the AUC gate result below as a pipeline sanity check, not the real gate.")
 
-    belief = ACECBeliefState(embedder, nli_scorer, config=ACECConfig(k_max=args.k_max))
+    belief = ACECBeliefState(embedder, nli_scorer, config=ACECConfig(k_max=args.k_max, tau_new=args.tau_new))
 
     records = []
     with open(args.records, encoding="utf-8") as f:
@@ -310,8 +322,8 @@ def main() -> None:
             f"  [debug] label_max_sim (all turns with an existing slot to compare "
             f"against, n={len(arr)}): min={arr.min():.3f} p25={np.percentile(arr, 25):.3f} "
             f"median={np.median(arr):.3f} p75={np.percentile(arr, 75):.3f} max={arr.max():.3f} "
-            f"| tau_new={ACECConfig().tau_new} "
-            f"| frac >= tau_new (routed REWRITE/EXPAND, not DECOMPOSE)={float((arr >= ACECConfig().tau_new).mean()):.1%}"
+            f"| tau_new={args.tau_new} "
+            f"| frac >= tau_new (routed REWRITE/EXPAND, not DECOMPOSE)={float((arr >= args.tau_new).mean()):.1%}"
         )
 
     if args.debug_dump and debug_records:
