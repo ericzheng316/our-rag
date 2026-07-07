@@ -43,3 +43,14 @@ rag/tool/ircot/
 
 # macOS
 .DS_Store
+
+# rag/{data,log,model} scaffold — keep the empty directory path (via .gitkeep),
+# ignore everything actually downloaded/generated into it (datasets, run logs,
+# model weights) so those never get committed.
+!rag/data/
+rag/data/*
+!rag/data/.gitkeep
+rag/log/*
+!rag/log/.gitkeep
+rag/model/*
+!rag/model/.gitkeep
