@@ -29,6 +29,28 @@ baseline; do not treat its prior findings as guidance for new work.
   (empirically: pi_a saturates ~1.0 per action mode, AUC becomes meaningless —
   first pilot run hit exactly this). Keep it below 10 so hit/miss actually
   depends on the query.
+- **Week-1 gate: PASS** (2026-07-07, 500-sample HotpotQA distractor pilot,
+  `cross-encoder/nli-deberta-v3-base`): held-out per-slot hit AUC 0.86-0.93
+  across a `--tau_new` sweep, K-accuracy 1.00 (likely trivial on HotpotQA —
+  nearly every question has exactly 2 supporting facts, so "always guess K=2"
+  scores this high on its own; re-check once a dataset with real K variance,
+  e.g. MuSiQue, is in the loop). Getting here took six real bugs, in the
+  order found: (1) `num_of_docs=10` == the whole distractor pool, trivial
+  full recall; (2) slot hypotheses were raw interrogative queries, not
+  declarative fragments NLI expects; (3) no entity binding (Algorithm 1 line
+  4) — an unbound hypothesis like "the actor known for X" can't reject a
+  same-topic distractor about the wrong entity; (4) `E5Embedder` never added
+  the `'query: '` prefix e5-base-v2 requires, collapsing cosine similarity
+  into an uninformative range; (5) `tau_new=0.55` (design doc's placeholder)
+  never once cleared past real E5 similarity (min observed 0.660 with the
+  prefix fix) — see config.py's `tau_new` comment for the calibrated value
+  and the sweep behind it; (6) **the dominant one**: `CrossEncoderNLIScorer`
+  read entailment off the wrong output index (`-1` == neutral, not
+  entailment, for sentence-transformers' `cross-encoder/nli-*` label
+  convention) — this alone explained the AUC being stuck *below* chance
+  regardless of every other fix. Moral: when a metric won't move across
+  several independently-plausible fixes, suspect the metric's own plumbing
+  before the hypothesis. Next: Section 9 Week 2 (VOI gate + GRPO scaffold).
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of

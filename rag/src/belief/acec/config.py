@@ -18,7 +18,20 @@ class ACECConfig:
     # similarity to hyp_j is >= tau_new (else the labeler emits DECOMPOSE);
     # a query is EXPAND (vs REWRITE) on its target slot if it is paraphrase-
     # similar (cosine >= tau_para) to the last query that targeted that slot.
-    tau_new: float = 0.55
+    #
+    # tau_new=0.55 (the design doc's placeholder) never once triggered
+    # DECOMPOSE past the first slot on real data: E5-with-'query:'-prefix
+    # cosine similarity between genuinely different sub-questions in the same
+    # HotpotQA question starts around 0.66 (Week-1 pilot, n=409 routing
+    # decisions, min=0.660). A sweep of 0.55/0.75/0.85/0.92/0.95 against the
+    # real go/no-go gate (all passed once the entailment-index bug in
+    # build_acec_calibration.py's CrossEncoderNLIScorer was also fixed) showed
+    # slot identification steadily improving with higher tau_new (avg slots
+    # spawned 1.00 -> 1.74 against K_true=2) at only a mild hit-AUC cost
+    # (0.927 -> 0.860, both comfortably above the 0.80 gate) — 0.9 balances
+    # the two. Re-sweep against your own logged trajectories before trusting
+    # this on a different dataset or embedder.
+    tau_new: float = 0.9
     tau_para: float = 0.85
 
     # Reward shaping (Section 3.1): R_cov = eta * Delta C_t, R_eff = -c_r per
