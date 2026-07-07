@@ -114,7 +114,8 @@ class _SamplingParams:
 
 if not _VLLM_AVAILABLE:
     SamplingParams = _SamplingParams
-sys.path.insert(0, "/root/rag/src")
+_RAG_SRC = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src"))
+sys.path.insert(0, _RAG_SRC)
 from belief.obs_extractor import E5Embedder, extract_observation
 from belief.belief_state import BeliefState
 POST_BATCH_SIZE = 2048
