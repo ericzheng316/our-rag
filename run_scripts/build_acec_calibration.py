@@ -38,7 +38,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.expanduser("~/rag/src"))
 from belief.obs_extractor import E5Embedder  # noqa: E402
-from belief.acec import ACECBeliefState, ACECConfig, GoldEvidenceAdapter, get_adapter  # noqa: E402
+from belief.acec import (  # noqa: E402
+    ACECBeliefState,
+    ACECConfig,
+    GoldEvidenceAdapter,
+    get_adapter,
+    title_from_content,
+)
 from belief.acec.offline_fit import (  # noqa: E402
     EmpiricalKPredictor,
     HitExample,
@@ -84,12 +90,6 @@ class CrossEncoderNLIScorer:
     def score(self, premise: str, hypothesis: str) -> float:
         probs = self.model.predict([(premise, hypothesis)], apply_softmax=True)[0]
         return float(probs[self._entail_idx])
-
-
-def recover_title(doc_content: str) -> str:
-    """Distractor paragraphs are formatted 'Title: sentence...' by
-    prep_full_distractor.py's hf_context_to_paras()."""
-    return doc_content.split(": ", 1)[0] if ": " in doc_content else doc_content[:40]
 
 
 def match_slots_to_sf(
@@ -148,7 +148,7 @@ def replay_record(
     debug_turns: List[Dict[str, Any]] = []
     for t, result in per_turn:
         docs = docs_per_turn[t]
-        doc_titles = {recover_title(d) for d in docs}
+        doc_titles = {title_from_content(d) for d in docs}
         for j, m in result.slot_scores.items():
             sf_title = slot_to_sf.get(j)
             if sf_title is None:
@@ -249,14 +249,17 @@ def main() -> None:
     held_out, fit_split = records[:n_held], records[n_held:]
 
     debug_records: Optional[List[Dict[str, Any]]] = [] if args.debug_dump else None
+    slot_coverage_stats: List[Tuple[int, int]] = []  # (num_slots_spawned, k_true)
 
     def run_split(split, collect_debug: bool):
         all_examples, all_k = [], []
         for record in split:
-            if not adapter.gold_titles(record) or not record.get("docs"):
+            sf_titles = adapter.gold_titles(record)
+            if not sf_titles or not record.get("docs"):
                 continue
             dbg = debug_records if (collect_debug and debug_records is not None and len(debug_records) < args.debug_dump_limit) else None
             examples, k_example = replay_record(record, belief, adapter, debug_records=dbg)
+            slot_coverage_stats.append((len(belief.coverage_belief.slots), len(sf_titles)))
             all_examples.extend(examples)
             if k_example is not None:
                 all_k.append(k_example)
@@ -266,6 +269,16 @@ def main() -> None:
     held_examples, held_k = run_split(held_out, collect_debug=True)
     print(f"Fit split: {len(fit_split)} records -> {len(fit_examples)} hit examples, {len(fit_k)} K examples")
     print(f"Held-out split: {len(held_out)} records -> {len(held_examples)} hit examples, {len(held_k)} K examples")
+
+    if slot_coverage_stats:
+        avg_slots = sum(n for n, _ in slot_coverage_stats) / len(slot_coverage_stats)
+        avg_k = sum(k for _, k in slot_coverage_stats) / len(slot_coverage_stats)
+        under_frac = sum(1 for n, k in slot_coverage_stats if n < k) / len(slot_coverage_stats)
+        print(
+            f"  [debug] slot identification: avg slots spawned={avg_slots:.2f}, "
+            f"avg K_true={avg_k:.2f}, under-decomposed (spawned < K_true) in "
+            f"{under_frac:.1%} of records"
+        )
 
     if args.debug_dump and debug_records:
         with open(args.debug_dump, "w", encoding="utf-8") as f:

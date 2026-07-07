@@ -32,6 +32,17 @@ class ACECConfig:
     # feeding itself circularly.
     ess_cap: float = 20.0
 
+    # p_j threshold above which a slot is considered confirmed enough to bind
+    # (Algorithm 1, line 4: "bind hypotheses: substitute entities confirmed in
+    # covered slots into hyp_j"). Once crossed, the title of the doc that drove
+    # this slot's belief update becomes its confirmed entity, and gets injected
+    # as context into every other unbound slot's hypothesis before NLI scoring
+    # (see entity_binding.py) — without this, an underspecified hypothesis like
+    # "the actor known for his role in X" can't tell a genuine hit from a
+    # same-topic distractor about the wrong entity (Week-1 pilot's diagnosed
+    # false-positive: NLI score 0.999 for a document about the wrong actor).
+    bound_threshold: float = 0.7
+
     # Action modes that route to a target slot (ANSWER is handled separately
     # and never indexes a hit-rate Beta).
     action_modes: Tuple[str, ...] = ("EXPAND", "REWRITE", "DECOMPOSE")

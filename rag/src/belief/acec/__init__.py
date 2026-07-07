@@ -14,6 +14,8 @@ from .belief_state import ACECBeliefState, NLIScorer, TurnResult
 from .config import ACECConfig
 from .coverage_belief import CoverageBelief, CoverageFeatures
 from .datasets import GoldEvidenceAdapter, get_adapter
+from .docs import doc_title, title_from_content
+from .entity_binding import augment_hypothesis_with_bound_entities
 from .hypothesis import query_to_hypothesis
 from .k_posterior import KPosterior, KPredictor, SplitCountKPredictor, UniformKPredictor
 from .observation_model import BetaDensity, HitRateBeta, ObservationModel
@@ -48,12 +50,15 @@ __all__ = [
     "SplitCountKPredictor",
     "TurnResult",
     "UniformKPredictor",
+    "augment_hypothesis_with_bound_entities",
+    "doc_title",
     "efficiency_penalty",
     "get_adapter",
     "gold_coverage_reward",
     "per_turn_reward",
     "potential_shaped_reward",
     "query_to_hypothesis",
+    "title_from_content",
     "turn_level_advantages",
     "turn_level_returns",
 ]

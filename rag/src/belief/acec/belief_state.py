@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence
 from .action_labeler import ActionLabel, ActionLabeler, ActionMode, Embedder
 from .config import ACECConfig
 from .coverage_belief import CoverageBelief, CoverageFeatures
+from .docs import doc_title
+from .entity_binding import augment_hypothesis_with_bound_entities
 from .hypothesis import query_to_hypothesis
 from .k_posterior import KPredictor, UniformKPredictor
 from .observation_model import ObservationModel
@@ -97,15 +99,45 @@ class ACECBeliefState:
             self.labeler.register_new_slot_query(new_idx, query or "")
             action = ActionLabel(ActionMode.DECOMPOSE, new_idx)
 
-        doc_texts = [d.get("contents", "") for d in new_docs if d.get("contents")]
+        doc_entries = [d for d in new_docs if d.get("contents")]
         slot_scores: Dict[int, float] = {}
+        slot_best_doc: Dict[int, Dict[str, Any]] = {}
         for j, slot in enumerate(cb.slots):
-            if not doc_texts:
+            if not doc_entries:
                 continue
-            slot_scores[j] = max(self.nli_scorer.score(text, slot.hypothesis) for text in doc_texts)
+            # Entity binding (Algorithm 1, line 4): ground this slot's
+            # hypothesis with entities already confirmed by *other* slots,
+            # so the NLI scorer can tell "a document about this specific,
+            # now-named entity" from "a document merely on the same topic"
+            # (Week-1 pilot diagnosis: an unbound hypothesis like "the actor
+            # known for his role in X" scored 0.999 entailment against a
+            # document about the wrong, co-starring actor).
+            other_bound_entities = [
+                entity
+                for k, other in enumerate(cb.slots)
+                if k != j and other.bound
+                for entity in other.bound_entities
+            ]
+            augmented_hyp = augment_hypothesis_with_bound_entities(slot.hypothesis, other_bound_entities)
+            scored_docs = [(self.nli_scorer.score(d["contents"], augmented_hyp), d) for d in doc_entries]
+            best_score, best_doc = max(scored_docs, key=lambda pair: pair[0])
+            slot_scores[j] = best_score
+            slot_best_doc[j] = best_doc
 
         features = cb.step(action, slot_scores)
         coverage_after = cb.coverage()
+
+        # Bind any slot whose coverage posterior just crossed the confidence
+        # threshold, using the title of the doc that drove its update as the
+        # confirmed entity — available to every other slot's hypothesis from
+        # the next turn onward.
+        for j, slot in enumerate(cb.slots):
+            if slot.bound or j not in slot_best_doc:
+                continue
+            if cb.p[j] >= self.config.bound_threshold:
+                entity = doc_title(slot_best_doc[j])
+                if entity:
+                    cb.bind_slot(j, entity)
 
         return TurnResult(
             features=features,
