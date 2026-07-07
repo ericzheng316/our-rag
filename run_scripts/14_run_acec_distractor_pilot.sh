@@ -11,7 +11,7 @@
 # to load, so real retrieval mode is infeasible there regardless of GPU size,
 # while this pilot only needs ~16GB VRAM for R3-RAG-Qwen.
 #
-# 用法: MAX_SAMPLES=500 bash 12_run_acec_distractor_pilot.sh
+# 用法: MAX_SAMPLES=500 bash 14_run_acec_distractor_pilot.sh
 
 set -e
 

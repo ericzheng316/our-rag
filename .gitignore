@@ -54,3 +54,8 @@ rag/log/*
 !rag/log/.gitkeep
 rag/model/*
 !rag/model/.gitkeep
+
+# Runtime-generated, per-machine (written by 02_start_retriever.sh /
+# 03_start_split_server.sh with that machine's actual IP) — never a source
+# file, shouldn't be committed.
+run_scripts/.env_retriever
