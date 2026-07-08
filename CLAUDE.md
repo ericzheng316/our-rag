@@ -67,8 +67,22 @@ baseline; do not treat its prior findings as guidance for new work.
   HotpotQA, and the VOI gate's early stopping likely narrows the window
   further. Not a negative result on the mechanism, just an untested one —
   revisit against a subset selected for repeated-re-probing behavior, or a
-  longer-chain dataset (MuSiQue), before concluding either way. Next: GRPO
-  scaffold (design doc Section 9 D11-14).
+  longer-chain dataset (MuSiQue), before concluding either way.
+- **Correction to the above, same day**: the "+30pt judge" comparison was
+  against a baseline with *no stopping mechanism at all*. The real question —
+  does ACEC's VOI gate beat the *old* `BeliefState`'s own stopping heuristic
+  (Condition A/B: `llm_reliability > 0.92` OR `ΔQ < 0.05` x2)? Ran that arm,
+  same 500-sample setup: old belief system scores judge=0.766, em_processed=
+  0.564, avg_docs=4.15 — statistically indistinguishable from ACEC's
+  0.79/0.56-0.57/4.05-4.07. **The two belief systems tie**; the earlier win was
+  "any reasonable stopping signal beats none," not "ACEC's belief is smarter."
+  Exactly the risk the design doc itself flagged (Section C2, Section 8 risk
+  #1): frozen-policy inference-time belief interventions are the cheap probe,
+  not the main event. ACEC's actual thesis-level advantage — dense per-turn
+  coverage reward shaping during GRPO training, which the old system
+  structurally cannot provide — remains untested. Next: GRPO scaffold (design
+  doc Section 9 D11-14) is now the real test of whether ACEC earns its
+  complexity, not another inference-time-only probe.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
