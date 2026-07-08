@@ -19,6 +19,7 @@ from .e5_adapter import E5QueryEmbedder
 from .entity_binding import augment_hypothesis_with_bound_entities
 from .hypothesis import query_to_hypothesis
 from .k_posterior import KPosterior, KPredictor, SplitCountKPredictor, UniformKPredictor
+from .nli_scorers import CosineNLIScorer, CrossEncoderNLIScorer
 from .observation_model import BetaDensity, HitRateBeta, ObservationModel
 from .reward import (
     efficiency_penalty,
@@ -37,8 +38,10 @@ __all__ = [
     "ActionLabeler",
     "ActionMode",
     "BetaDensity",
+    "CosineNLIScorer",
     "CoverageBelief",
     "CoverageFeatures",
+    "CrossEncoderNLIScorer",
     "E5QueryEmbedder",
     "Embedder",
     "GoldEvidenceAdapter",

@@ -14,6 +14,7 @@ estimated on labeled trajectories (Section 2.2's closing argument).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -84,6 +85,32 @@ def fit_observation_model(examples: Sequence[HitExample]) -> Tuple[ObservationMo
     hit_rates = {mode: (sum(hits) / len(hits) if hits else 0.5) for mode, hits in by_mode.items()}
 
     return model, hit_rates
+
+
+def load_calibrated_observation_model(path: str) -> Tuple[ObservationModel, Dict[str, float]]:
+    """Reload the observation_model.json written by
+    run_scripts/build_acec_calibration.py, so a live rollout uses the same
+    frozen, offline-fitted parameters the Week-1 gate was checked against
+    (design doc Section 2.2: "at test time the computation is identical with
+    frozen parameters")."""
+    with open(path, encoding="utf-8") as f:
+        payload = json.load(f)
+    model = ObservationModel.from_dict(payload["observation_model"])
+    hit_rates = payload["hit_rates"]
+    return model, hit_rates
+
+
+def hit_rates_to_beta_priors(
+    hit_rates: Dict[str, float], ess: float = 10.0
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Convert calibrated empirical hit rates (pi_a per action mode) into
+    ACECConfig's Beta pseudo-count priors (hit_prior_alpha0/beta0), at a
+    fixed effective sample size. This is a scoped simplification, not a
+    re-derivation of the "correct" ESS from the calibration data's actual
+    per-mode sample counts — revisit if live results are sensitive to it."""
+    alpha0 = {mode: rate * ess for mode, rate in hit_rates.items()}
+    beta0 = {mode: (1.0 - rate) * ess for mode, rate in hit_rates.items()}
+    return alpha0, beta0
 
 
 def evaluate_hit_auc(examples: Sequence[HitExample]) -> float:

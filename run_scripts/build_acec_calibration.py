@@ -31,7 +31,6 @@ import json
 import os
 import random
 import sys
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -41,6 +40,8 @@ from belief.obs_extractor import E5Embedder  # noqa: E402
 from belief.acec import (  # noqa: E402
     ACECBeliefState,
     ACECConfig,
+    CosineNLIScorer,
+    CrossEncoderNLIScorer,
     E5QueryEmbedder,
     GoldEvidenceAdapter,
     get_adapter,
@@ -53,52 +54,6 @@ from belief.acec.offline_fit import (  # noqa: E402
     evaluate_hit_auc,
     fit_observation_model,
 )
-
-
-class CosineNLIScorer:
-    """E5-cosine stand-in for a calibrated NLI cross-encoder. Use only to
-    sanity-check the replay pipeline — the real go/no-go gate needs a real
-    cross-encoder (--nli_model), since cosine cannot separate topically-similar
-    non-entailing docs from true hits (the exact distractor-mode failure mode
-    the design doc's observation model is meant to fix)."""
-
-    def __init__(self, embedder: E5Embedder):
-        self.embedder = embedder
-        self._cache: Dict[Tuple[str, str], float] = {}
-
-    def score(self, premise: str, hypothesis: str) -> float:
-        key = (premise[:200], hypothesis)
-        if key not in self._cache:
-            embs = self.embedder.encode([premise[:200], hypothesis], show_progress_bar=False)
-            sim = float(
-                embs[0] @ embs[1] / (np.linalg.norm(embs[0]) * np.linalg.norm(embs[1]) + 1e-9)
-            )
-            self._cache[key] = (sim + 1.0) / 2.0  # cosine [-1,1] -> [0,1]
-        return self._cache[key]
-
-
-class CrossEncoderNLIScorer:
-    """Real calibrated NLI observation model (design doc Section 1.2)."""
-
-    def __init__(self, model_name: str):
-        from sentence_transformers import CrossEncoder
-
-        self.model = CrossEncoder(model_name)
-        # sentence-transformers' own convention for its cross-encoder/nli-*
-        # model family (see their CrossEncoder usage docs):
-        #   label_mapping = ['contradiction', 'entailment', 'neutral']
-        # i.e. entailment is index 1, NOT the last index — the previous
-        # self._entail_idx = -1 was silently reading off P(neutral) instead
-        # of P(entailment) the entire time. This is the most likely
-        # explanation for the Week-1 pilot's per-slot hit AUC staying stuck
-        # *below* 0.5 (not just weak, systematically wrong-direction) across
-        # every other fix (num_of_docs, declarative hypotheses, entity
-        # binding, E5 query prefix, tau_new sweep) — none of them touch this.
-        self._entail_idx = 1
-
-    def score(self, premise: str, hypothesis: str) -> float:
-        probs = self.model.predict([(premise, hypothesis)], apply_softmax=True)[0]
-        return float(probs[self._entail_idx])
 
 
 def match_slots_to_sf(

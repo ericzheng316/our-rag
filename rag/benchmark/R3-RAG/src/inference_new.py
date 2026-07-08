@@ -118,6 +118,14 @@ _RAG_SRC = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file_
 sys.path.insert(0, _RAG_SRC)
 from belief.obs_extractor import E5Embedder, extract_observation
 from belief.belief_state import BeliefState
+from belief.acec import (
+    ACECBeliefState,
+    ACECConfig,
+    CrossEncoderNLIScorer,
+    E5QueryEmbedder,
+    augment_hypothesis_with_bound_entities,
+)
+from belief.acec.offline_fit import hit_rates_to_beta_priors, load_calibrated_observation_model
 POST_BATCH_SIZE = 2048
 SSL_RETRY = 8
 DEBUG = False
@@ -231,6 +239,19 @@ def get_args():
                         help="Disable cross-turn evidence pool reranking (ablation).")
     parser.add_argument('--use_hyde', action='store_true', default=False,
                         help="HyDE: for turn>=2, replace sub-query with hypothetical passage before retrieval.")
+    parser.add_argument('--use_acec', action='store_true', default=False,
+                        help="ACEC-Belief: VOI stopping gate + posterior-driven bridge-entity "
+                             "query rewriting (design doc Section 2.1, Week-2 D8-10 probe).")
+    parser.add_argument('--acec_nli_model', type=str, default='cross-encoder/nli-deberta-v3-base',
+                        help="sentence-transformers CrossEncoder name for ACEC's observation model "
+                             "(only loaded when --use_acec is set).")
+    parser.add_argument('--acec_observation_model', type=str, default=None,
+                        help="Path to a calibrated observation_model.json from "
+                             "run_scripts/build_acec_calibration.py. Omit to fall back to ACECConfig() "
+                             "defaults (uncalibrated) with a printed warning.")
+    parser.add_argument('--acec_tau_new', type=float, default=None,
+                        help="Override ACECConfig's tau_new (default 0.9, calibrated against the "
+                             "Week-1 pilot's E5-with-query-prefix similarity distribution).")
     parser.add_argument('--nim_keys_file', type=str, default=None,
                         help="JSON file with list of NVIDIA NIM API keys. When set, uses NIM instead of local vllm.")
     parser.add_argument('--nim_model', type=str, default='meta/llama-3.1-8b-instruct',
@@ -345,14 +366,36 @@ def load_distractor_ctx(distractor_file):
 
 def solve(args):
     # try:
-        ckpt, records = solve_init(args)
-        distractor_ctx = load_distractor_ctx(args.distractor_file) if args.distractor_file else None
-        if args.use_belief:
+        if args.use_belief or args.use_acec:
             e5_path = args.e5_model_path or os.path.join(os.path.expanduser("~"), "models", "e5-base-v2")
             print(f"[BeliefState] Loading E5Embedder from {e5_path} ...")
             embedder = E5Embedder(e5_path)
         else:
             embedder = None
+
+        acec_embedder = acec_nli_scorer = acec_config = acec_obs_model = None
+        if args.use_acec:
+            acec_embedder = E5QueryEmbedder(embedder)
+            print(f"[ACEC] Loading NLI cross-encoder {args.acec_nli_model} ...")
+            acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
+            acec_config = ACECConfig()
+            if args.acec_observation_model:
+                print(f"[ACEC] Loading calibrated observation model from {args.acec_observation_model} ...")
+                acec_obs_model, acec_hit_rates = load_calibrated_observation_model(args.acec_observation_model)
+                acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(acec_hit_rates)
+            else:
+                print("[ACEC] WARNING: no --acec_observation_model given — using uncalibrated ACECConfig() defaults.")
+            if args.acec_tau_new is not None:
+                acec_config.tau_new = args.acec_tau_new
+
+        ckpt, records = solve_init(
+            args,
+            acec_embedder=acec_embedder,
+            acec_nli_scorer=acec_nli_scorer,
+            acec_config=acec_config,
+            acec_obs_model=acec_obs_model,
+        )
+        distractor_ctx = load_distractor_ctx(args.distractor_file) if args.distractor_file else None
         solve_main(args, ckpt, records, temperature=0, distractor_ctx=distractor_ctx, embedder=embedder)
         # pdb.set_trace()
         # re_init_no_answer_records(records)
@@ -363,7 +406,11 @@ def solve(args):
         # pdb.set_trace()
         with open(os.path.join(args.log_dir , "records.jsonl"), "w", encoding='utf-8') as f:
             for record in records:
-                out = {k: (v.to_dict() if isinstance(v, BeliefState) else v) for k, v in record.items()}
+                out = {
+                    k: (v.to_dict() if isinstance(v, BeliefState) else v)
+                    for k, v in record.items()
+                    if k != 'acec_belief'  # ACECBeliefState isn't JSON-serializable; not needed for EM eval
+                }
                 json.dump(out, f, ensure_ascii=False)
                 f.write('\n')
     # except Exception as e:
@@ -375,7 +422,13 @@ def solve(args):
     #     print(f"发生错误: {e}")
     #     return
 
-def solve_init(args):
+def _new_acec_belief(question, acec_embedder, acec_nli_scorer, acec_config, acec_obs_model):
+    belief = ACECBeliefState(acec_embedder, acec_nli_scorer, config=acec_config, obs_model=acec_obs_model)
+    belief.reset(question)
+    return belief
+
+
+def solve_init(args, acec_embedder=None, acec_nli_scorer=None, acec_config=None, acec_obs_model=None):
     if args.nim_keys_file:
         with open(args.nim_keys_file) as f:
             data = json.load(f)
@@ -434,6 +487,9 @@ def solve_init(args):
                             "belief_low_delta_count": 0,      # Task 3: consecutive low-ΔQ counter
                             "max_turns": args.num_search_one_attempt,
                             **({'belief': BeliefState()} if args.use_belief else {}),
+                            **({'acec_belief': _new_acec_belief(
+                                data['question'], acec_embedder, acec_nli_scorer, acec_config, acec_obs_model,
+                            )} if args.use_acec else {}),
                         }
                         for data in datas
                     ])
@@ -508,7 +564,39 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
             hyde_passages = hyde_query_remote(args.split_url, raw_queries)
             retrive_list = [(i, hyp) for (i, _), hyp in zip(retrive_list, hyde_passages)]
             print(f"[HyDE] Turn {turn+1}: replaced {len(retrive_list)} queries with hypothetical passages")
-        
+
+        # ACEC: posterior-driven bridge-entity query rewriting (design doc Section 2.1).
+        # Only for turn>=1 (no belief state exists yet at turn 0), and only when there's
+        # an actual bound entity from another slot to inject — otherwise the "rewrite"
+        # would just be the target slot's bare hypothesis, no better than the model's own
+        # query. Retrieval is the only thing that sees the rewrite; the transcript still
+        # shows the model's original query (same "invisible to the transcript" property
+        # as the HyDE block above).
+        if args.use_acec and turn >= 1 and retrive_list:
+            acec_rewritten_count = 0
+            acec_new_retrive_list = []
+            for (i, query) in retrive_list:
+                acec_belief = records[i].get('acec_belief')
+                rewritten = query
+                if acec_belief is not None:
+                    cb = acec_belief.coverage_belief
+                    target_idx = cb.suggest_target_slot()
+                    if target_idx is not None:
+                        other_bound_entities = [
+                            entity
+                            for k, slot in enumerate(cb.slots)
+                            if k != target_idx and slot.bound
+                            for entity in slot.bound_entities
+                        ]
+                        if other_bound_entities:
+                            target_hyp = cb.slots[target_idx].hypothesis
+                            rewritten = augment_hypothesis_with_bound_entities(target_hyp, other_bound_entities)
+                            acec_rewritten_count += 1
+                acec_new_retrive_list.append((i, rewritten))
+            retrive_list = acec_new_retrive_list
+            if acec_rewritten_count:
+                print(f"[ACEC] Turn {turn+1}: rewrote {acec_rewritten_count} queries with bound bridge entities")
+
         if distractor_ctx is not None:
             doc_list = []
             # Batch-encode all unique queries at once to avoid per-query overhead
@@ -628,6 +716,23 @@ def solve_main(args, ckpt, records, temperature=0, distractor_ctx=None, embedder
                 elif belief.step >= 2 and records[i]['belief_low_delta_count'] >= 2:
                     records[i]['force_answer'] = True
                     print(f"[BeliefStop-B] sample {i} turn {turn+1}: ΔQ<0.05 for {records[i]['belief_low_delta_count']} turns → saturated, force answer")
+
+        #===============================Update ACEC Belief================================
+        if args.use_acec:
+            # (i -> query actually used for retrieval this turn, original or ACEC-rewritten)
+            acec_query_used = dict(retrive_list)
+            for i, ids in id_order.items():
+                acec_belief = records[i].get('acec_belief')
+                if acec_belief is None:
+                    continue
+                retrieved_docs = [
+                    {'id': doc_id, 'contents': doc_dict[doc_id], 'score': score_dict.get(doc_id, 0.72)}
+                    for doc_id in ids
+                ]
+                acec_belief.turn(query=acec_query_used.get(i), new_docs=retrieved_docs, is_answer=False)
+                if acec_belief.coverage_belief.should_stop_voi():
+                    records[i]['force_answer'] = True
+                    print(f"[ACEC-VOI] sample {i} turn {turn+1}: VOI gate triggered, force answer")
 
         #===============================Update context===================================
         print(f"Turn{turn+ 1} : Update context*********************************")
