@@ -83,6 +83,40 @@ baseline; do not treat its prior findings as guidance for new work.
   structurally cannot provide — remains untested. Next: GRPO scaffold (design
   doc Section 9 D11-14) is now the real test of whether ACEC earns its
   complexity, not another inference-time-only probe.
+- **GRPO scaffold, ablation (b) only — correctness check PASSED, no result
+  yet** (2026-07-08). Both existing GRPO-RSF training paths
+  (`rag/train/grpo_rsf_simple.py`, single-GPU/no-OpenRLHF; and
+  `rag/train/R3RAG_OpenRLHF/openrlhf/trainer/ppo_utils/experience_maker_grpo_rsf.py`,
+  the distributed path) predate the ACEC design doc by two months and had the
+  exact bug Section 3.2 warns about: one scalar GRPO advantage per trajectory,
+  broadcast to every turn, which collapses dense per-turn `R_sf` into a
+  final-coverage bonus under a shared-question group baseline. Fixed in both
+  with `turn_level_returns`/`turn_level_advantages` (ported from
+  `acec/reward.py`'s implementation of the same, verified bit-for-bit
+  identical — not imported directly, to keep `grpo_rsf_simple.py`
+  dependency-light and avoid pulling `acec/__init__.py`'s eager
+  torch/sentence-transformers imports into the OpenRLHF training env).
+  `grpo_rsf_simple.py` also had no chat template at all (`inference_new.py`
+  and the OpenRLHF path wrap every turn in `ApplyChatTemplate`'s
+  `<|im_start|>system...user...assistant` — without it R3-RAG-Qwen doesn't
+  reliably produce the `Step N:\n` format, so every rollout was hitting the
+  format-error branch after turn 1, i.e. `avg_turns` stuck at 1.00, looking
+  like "always answers immediately" when it was really "never emits
+  parseable output"). Fixed by porting `ApplyChatTemplate` locally. Ran a
+  20-sample/2-episode dry run of `grpo_rsf_simple.py` with the retriever
+  server *not* running (real-retrieval infra untested on this box, see below)
+  — no crash across both episodes, `avg_turns` ticked up to 1.12 after the
+  chat-template fix (a couple of rollouts did reach turn 2), loss ≈0 as
+  expected when a GRPO group's rewards have ~zero variance (most rollouts hit
+  the same format penalty with no working retrieval). This confirms the
+  turn-level-advantage code path runs and is exercised on >1-turn
+  trajectories, but is **not** a result on ablation (b) itself — that needs a
+  working retriever (real `R_sf` signal) and the design's actual smoke-run
+  scale (100 steps, 5k prompts, G=8, `20_train_grpo_rsf.sh`). Next: stand up
+  `02_start_retriever.sh` on this box (currently hardcoded to `/root/...`,
+  needs the same portability fix already applied elsewhere; untested whether
+  this box has the RAM/GPU budget for a full wiki18 FAISS index — see
+  Environment notes below) before running ablation (b) for a real number.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
