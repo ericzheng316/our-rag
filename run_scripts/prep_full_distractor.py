@@ -4,13 +4,21 @@ with distractor_paras field, suitable for distractor-mode inference.
 
 Output: $HOME/data/flashrag_datasets/hotpotqa/dev_distractor.jsonl
 Fields: id, question, golden_answers, metadata, distractor_paras,
-        distractor_titles, supporting_facts
+        distractor_titles, supporting_facts, question_type
 
 `distractor_titles[j]` is the title of `distractor_paras[j]` (parallel arrays),
 and `supporting_facts` is HotpotQA's raw {'title': [...], 'sent_id': [...]}
 dict — both are needed by rag/src/belief/acec/offline_fit.py to derive gold
 hit labels for ACEC calibration (they were previously dropped, which is why
 inference_new.py's records.jsonl could never support that calibration step).
+
+`question_type` is HotpotQA's own "bridge"/"comparison" annotation (~75%/25%
+split) — also previously dropped. Matters for evaluating ACEC's posterior-
+driven bridge-entity rewriting specifically: "comparison" questions name both
+entities directly in the question text (e.g. "Were X and Y of the same
+nationality?"), so they never need bridge disambiguation at all — only
+"bridge" questions (and only the subset where the model's own query is
+under-specified enough to get stuck) can ever exercise that mechanism.
 """
 
 import json
@@ -45,6 +53,7 @@ def main():
                 "distractor_paras": paras,
                 "distractor_titles": titles,
                 "supporting_facts": d.get("supporting_facts"),
+                "question_type": d.get("type"),
             }
 
     print(f"Loaded {len(hf_by_question)} questions from HF distractor file")
@@ -64,6 +73,7 @@ def main():
                 d["distractor_paras"] = []
                 d["distractor_titles"] = []
                 d["supporting_facts"] = None
+                d["question_type"] = None
             json.dump(d, fout, ensure_ascii=False)
             fout.write("\n")
 

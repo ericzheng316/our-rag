@@ -470,6 +470,10 @@ def solve_init(args, acec_embedder=None, acec_nli_scorer=None, acec_config=None,
                             # (rag/src/belief/acec/offline_fit.py). None outside distractor
                             # mode / when prep_full_distractor.py predates this field.
                             'supporting_facts' : data.get('supporting_facts'),
+                            # HotpotQA's own "bridge"/"comparison" annotation — "comparison"
+                            # questions name both entities directly, so they never need
+                            # ACEC's bridge-entity rewriting; only "bridge" questions can.
+                            'question_type' : data.get('question_type'),
                             'num_passages_one_split_retrieval' : num_passages_one_split_retrieval,
                             'num_passages_one_retrieval' : num_passages_one_retrieval,
                             'split' : split,
