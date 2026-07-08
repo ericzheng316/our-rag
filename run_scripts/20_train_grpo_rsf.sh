@@ -39,6 +39,13 @@ OPENRLHF_DIR="$REPO_ROOT/train/R3RAG_OpenRLHF"
 MODEL_PATH="$HOME/models/R3-RAG-Qwen"
 TRAIN_DATA="$HOME/data/flashrag_datasets/hotpotqa/train_sf.jsonl"
 OUTPUT_DIR="$HOME/logs/grpo_rsf_$(date +%Y%m%d_%H%M%S)"
+# Separate venv from rag/.venv on purpose: OpenRLHF's requirements.txt pins
+# deepspeed/transformers/ray/flash-attn versions that would otherwise fight
+# the already-calibrated Week-1/2 inference venv (vllm + sentence-transformers).
+# Setup: python3 -m venv "$REPO_ROOT/.venv_train" && source it && \
+#        pip install -r "$OPENRLHF_DIR/requirements.txt" && \
+#        pip install -e "$OPENRLHF_DIR"
+TRAIN_VENV="${TRAIN_VENV:-$REPO_ROOT/.venv_train}"
 
 # ── Servers (set by .env_retriever or override here) ──────────────────────────
 RETRIEVE_URL="${RETRIEVE_URL:-http://127.0.0.1:8081/search}"
@@ -61,7 +68,7 @@ echo "[GRPO-RSF] lora_rank=$LORA_RANK n_samples_per_prompt=$N_SAMPLES max_sample
 cd "$OPENRLHF_DIR"
 
 PYTHONPATH="$OPENRLHF_DIR:$PYTHONPATH" \
-"$REPO_ROOT/.venv/bin/python" "$OPENRLHF_DIR/openrlhf/cli/train_grpo_rsf.py" \
+"$TRAIN_VENV/bin/python" "$OPENRLHF_DIR/openrlhf/cli/train_grpo_rsf.py" \
     --pretrain "$MODEL_PATH" \
     --save_path "$OUTPUT_DIR/ckpt" \
     --save_steps 50 \
