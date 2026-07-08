@@ -51,6 +51,24 @@ baseline; do not treat its prior findings as guidance for new work.
   regardless of every other fix. Moral: when a metric won't move across
   several independently-plausible fixes, suspect the metric's own plumbing
   before the hypothesis. Next: Section 9 Week 2 (VOI gate + GRPO scaffold).
+- **Week-2 VOI gate probe: validated** (2026-07-08, `--use_acec` wired into
+  `inference_new.py`, 500-sample HotpotQA distractor, calibrated observation
+  model): judge 0.79 vs 0.49 baseline, em_processed 0.56-0.57 vs 0.31, *and*
+  fewer average docs retrieved (4.0-4.07 vs 5.21) — accuracy gain, not bought
+  with more retrieval. Reproduced across two independent 500-sample runs.
+  Benefits HotpotQA's `bridge` and `comparison` question types about equally
+  (em_processed 0.559 vs 0.573) — expected, since the VOI gate is a general
+  "have I covered enough" signal, not bridge-structure-specific.
+  **Posterior-driven bridge-entity query rewriting fired 0 times across
+  1,000+ samples** (three runs: 20/500/500, one rewrite total, in the very
+  first 20-sample check) — the mechanism is implementation-verified (see the
+  targeted unit test in the PR) but essentially unexercised at this scale/
+  distribution: R3-RAG-Qwen rarely gets stuck re-probing an unresolved slot on
+  HotpotQA, and the VOI gate's early stopping likely narrows the window
+  further. Not a negative result on the mechanism, just an untested one —
+  revisit against a subset selected for repeated-re-probing behavior, or a
+  longer-chain dataset (MuSiQue), before concluding either way. Next: GRPO
+  scaffold (design doc Section 9 D11-14).
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
