@@ -42,9 +42,19 @@ OUTPUT_DIR="$HOME/logs/grpo_rsf_$(date +%Y%m%d_%H%M%S)"
 # Separate venv from rag/.venv on purpose: OpenRLHF's requirements.txt pins
 # deepspeed/transformers/ray/flash-attn versions that would otherwise fight
 # the already-calibrated Week-1/2 inference venv (vllm + sentence-transformers).
-# Setup: python3 -m venv "$REPO_ROOT/.venv_train" && source it && \
-#        pip install -r "$OPENRLHF_DIR/requirements.txt" && \
-#        pip install -e "$OPENRLHF_DIR"
+# Setup — flash-attn's setup.py imports torch at build time, so it must be
+# installed *before* flash-attn, and built with --no-build-isolation so the
+# build sees it (plain `pip install -r requirements.txt` fails on this: pip's
+# isolated build env for flash-attn doesn't have torch yet even though torch
+# is listed later in the same file):
+#   python3 -m venv "$REPO_ROOT/.venv_train" && source "$REPO_ROOT/.venv_train/bin/activate"
+#   pip install torch
+#   pip install flash-attn==2.7.0.post2 --no-build-isolation   # add MAX_JOBS=4 if it OOMs compiling
+#   pip install -r "$OPENRLHF_DIR/requirements.txt"             # rest of the deps; torch/flash-attn already satisfied
+#   pip install -e "$OPENRLHF_DIR"
+# If flash-attn's from-source build is a blocker for a quick correctness-only
+# dry run, set USE_FLASH_ATTN=0 (see below) and skip installing it for now —
+# it's only needed for the real smoke run's speed/memory, not correctness.
 TRAIN_VENV="${TRAIN_VENV:-$REPO_ROOT/.venv_train}"
 
 # ── Servers (set by .env_retriever or override here) ──────────────────────────
@@ -56,43 +66,50 @@ LORA_RANK="${LORA_RANK:-64}"
 N_SAMPLES="${N_SAMPLES:-8}"        # G, rollouts per prompt
 MAX_SAMPLES="${MAX_SAMPLES:-5000}" # prompt pool size
 NUM_EPISODES="${NUM_EPISODES:-100}"
+USE_FLASH_ATTN="${USE_FLASH_ATTN:-1}" # set 0 to skip (not installed yet / correctness-only dry run)
 
 mkdir -p "$OUTPUT_DIR"
 
 echo "[GRPO-RSF] Output dir:   $OUTPUT_DIR"
 echo "[GRPO-RSF] Retriever:    $RETRIEVE_URL"
 echo "[GRPO-RSF] Splitter:     $SPLIT_URL"
-echo "[GRPO-RSF] lora_rank=$LORA_RANK n_samples_per_prompt=$N_SAMPLES max_samples=$MAX_SAMPLES num_episodes=$NUM_EPISODES"
+echo "[GRPO-RSF] lora_rank=$LORA_RANK n_samples_per_prompt=$N_SAMPLES max_samples=$MAX_SAMPLES num_episodes=$NUM_EPISODES use_flash_attn=$USE_FLASH_ATTN"
 
 # ── Training ───────────────────────────────────────────────────────────────────
 cd "$OPENRLHF_DIR"
 
+args=(
+    --pretrain "$MODEL_PATH"
+    --save_path "$OUTPUT_DIR/ckpt"
+    --save_steps 50
+    --logging_steps 1
+    --eval_steps 50
+    --micro_train_batch_size 1
+    --train_batch_size 8
+    --micro_rollout_batch_size 1
+    --rollout_batch_size 8
+    --n_samples_per_prompt "$N_SAMPLES"
+    --max_samples "$MAX_SAMPLES"
+    --max_epochs 1
+    --num_episodes "$NUM_EPISODES"
+    --prompt_max_len 2048
+    --generate_max_len 512
+    --zero_stage 2
+    --bf16
+    --gradient_checkpointing
+    --lora_rank "$LORA_RANK"
+    --lora_alpha $((LORA_RANK * 2))
+    --actor_learning_rate 5e-7
+    --init_kl_coef 0.01
+    --advantage_estimator reinforce
+    --prompt_data "$TRAIN_DATA"
+    --prompt_data_probs 1.0
+)
+if [[ "$USE_FLASH_ATTN" == "1" ]]; then
+    args+=(--flash_attn)
+fi
+
 PYTHONPATH="$OPENRLHF_DIR:$PYTHONPATH" \
 "$TRAIN_VENV/bin/python" "$OPENRLHF_DIR/openrlhf/cli/train_grpo_rsf.py" \
-    --pretrain "$MODEL_PATH" \
-    --save_path "$OUTPUT_DIR/ckpt" \
-    --save_steps 50 \
-    --logging_steps 1 \
-    --eval_steps 50 \
-    --micro_train_batch_size 1 \
-    --train_batch_size 8 \
-    --micro_rollout_batch_size 1 \
-    --rollout_batch_size 8 \
-    --n_samples_per_prompt "$N_SAMPLES" \
-    --max_samples "$MAX_SAMPLES" \
-    --max_epochs 1 \
-    --num_episodes "$NUM_EPISODES" \
-    --prompt_max_len 2048 \
-    --generate_max_len 512 \
-    --zero_stage 2 \
-    --bf16 \
-    --flash_attn \
-    --gradient_checkpointing \
-    --lora_rank "$LORA_RANK" \
-    --lora_alpha $((LORA_RANK * 2)) \
-    --actor_learning_rate 5e-7 \
-    --init_kl_coef 0.01 \
-    --advantage_estimator reinforce \
-    --prompt_data "$TRAIN_DATA" \
-    --prompt_data_probs 1.0 \
+    "${args[@]}" \
     2>&1 | tee "$OUTPUT_DIR/train.log"
