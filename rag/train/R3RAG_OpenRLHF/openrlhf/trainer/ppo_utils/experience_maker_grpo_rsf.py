@@ -3,12 +3,21 @@ GRPO experience maker with R_sf (supporting-facts marginal) process reward.
 
 Step reward  : r_sf_t = |new SF titles found at turn t| / |total SF titles|
 Final reward : R_ans  = 1.0 if EM-correct, 0.0 otherwise  (no LLM judge)
-Total        : R_total = λ_ans * R_ans + λ_sf * Σ_t r_sf_t
 
-GRPO normalization (no critic):
-  For G rollouts of the same question:
-    A_i = (R_total_i − mean_j R_total_j) / (std_j R_total_j + ε)
-  Each step in trajectory i is scaled by A_i.
+Turn-level GRPO advantages (design doc Section 3.2 — load-bearing):
+  G_{i,t} = sum_{t' >= t} r_{i,t'}                         (turn_level_returns)
+  A_{i,t} = (G_{i,t} - mu_t) / (sigma_t + eps)              (turn_level_advantages)
+  where mu_t/sigma_t are computed over rollouts in the group still alive at
+  turn t. Each turn's tokens are trained on A_{i,t}, not one trajectory-wide
+  scalar. This matters because a shared-question GRPO group's baseline
+  cancels the initial state identically across rollouts — under plain
+  trajectory-level advantages (one scalar per rollout, broadcast to every
+  turn) all of the dense per-turn R_sf signal collapses to a final-coverage
+  bonus and the per-turn structure becomes invisible to the gradient. Ported
+  from rag/src/belief/acec/reward.py (same semantics, not imported directly:
+  that package eager-imports torch/sentence-transformers via its __init__ for
+  the belief-specific modules, which this R_sf-only path has no reason to
+  depend on).
 
 Key advantages over the existing PPO experience_maker.py:
   - Zero LLM-judge API calls per step → 5-10x faster rollout
@@ -111,17 +120,43 @@ def compute_em(prediction: str, golden_answers: List[str]) -> bool:
     return any(normalize(ans) == pred_norm for ans in golden_answers)
 
 
-# ── GRPO normalization ─────────────────────────────────────────────────────────
+# ── Turn-level GRPO advantages (design doc Section 3.2) ────────────────────────
 
-def grpo_normalize(totals: List[float], eps: float = 1e-8) -> List[float]:
-    """Normalize a list of trajectory rewards to zero-mean, unit-variance."""
-    n = len(totals)
-    if n <= 1:
-        return [0.0] * n
-    mean = sum(totals) / n
-    variance = sum((r - mean) ** 2 for r in totals) / n
-    std = variance ** 0.5
-    return [(r - mean) / (std + eps) for r in totals]
+def turn_level_returns(rewards_per_turn: List[float]) -> List[float]:
+    """G_{i,t} = sum_{t' >= t} r_{i,t'} for one rollout."""
+    returns = [0.0] * len(rewards_per_turn)
+    running = 0.0
+    for t in range(len(rewards_per_turn) - 1, -1, -1):
+        running += rewards_per_turn[t]
+        returns[t] = running
+    return returns
+
+
+def turn_level_advantages(group_returns: List[List[float]], eps: float = 1e-6) -> List[List[float]]:
+    """
+    A_{i,t} = (G_{i,t} - mu_t) / (sigma_t + eps), with mu_t/sigma_t computed
+    over rollouts in the group still alive at turn t. Falls back to the raw
+    return when fewer than 2 rollouts remain alive at t.
+
+    `group_returns[i]` is `turn_level_returns(reward_list_i)` for rollout i in
+    a GRPO group (all rollouts sharing the same question/prompt).
+    """
+    import math
+    max_len = max((len(r) for r in group_returns), default=0)
+    advantages = [[0.0] * len(r) for r in group_returns]
+    for t in range(max_len):
+        alive = [(i, r[t]) for i, r in enumerate(group_returns) if len(r) > t]
+        if len(alive) < 2:
+            for i, val in alive:
+                advantages[i][t] = val
+            continue
+        vals = [v for _, v in alive]
+        mu = sum(vals) / len(vals)
+        var = sum((v - mu) ** 2 for v in vals) / len(vals)
+        sigma = math.sqrt(var)
+        for i, v in alive:
+            advantages[i][t] = (v - mu) / (sigma + eps)
+    return advantages
 
 
 # ── Experience maker ───────────────────────────────────────────────────────────
@@ -287,25 +322,35 @@ class GRPORsfExperienceMaker(NaiveExperienceMaker):
                 R_total = sum(reward_list)
                 traj_store[q].append((sample_list, reward_list, R_total))
 
-        # ── GRPO normalization per question ────────────────────────────────────
+        # ── Turn-level GRPO normalization per question (Section 3.2) ───────────
         all_samples: List[Samples] = []
         all_rewards: List[float]   = []
+        turn_counts: List[int]     = []   # sanity dashboard: turns per rollout
+        r_total_log: List[float]   = []   # sanity dashboard: trajectory returns
 
         for q in range(n_questions):
             trajs = traj_store[q]
             if not trajs:
                 continue
 
-            r_totals = [t[2] for t in trajs]
-            advantages = grpo_normalize(r_totals)
+            group_returns = [turn_level_returns(reward_list) for _, reward_list, _ in trajs]
+            group_advantages = turn_level_advantages(group_returns)
 
-            for (sample_list, reward_list, _), advantage in zip(trajs, advantages):
-                # Scale each step reward by the GRPO advantage.
-                # This preserves relative magnitudes within the trajectory while
-                # applying group-relative weighting across trajectories.
-                scaled = [r * advantage for r in reward_list] if reward_list else []
+            for (sample_list, _, r_total), advantages in zip(trajs, group_advantages):
+                # advantages[t] is A_{i,t}, computed across the group at turn t
+                # (not a single trajectory-wide scalar) — this is what keeps the
+                # dense per-turn R_sf signal from collapsing under the shared
+                # group baseline. See module docstring.
                 all_samples.extend(sample_list)
-                all_rewards.extend(scaled)
+                all_rewards.extend(advantages)
+                turn_counts.append(len(sample_list))
+                r_total_log.append(r_total)
+
+        if turn_counts:
+            avg_turns = sum(turn_counts) / len(turn_counts)
+            avg_r_total = sum(r_total_log) / len(r_total_log)
+            print(f"[GRPO-RSF] batch: {len(turn_counts)} rollouts, "
+                  f"avg_turns={avg_turns:.2f}, avg_R_total={avg_r_total:.3f}")
 
         # ── Pad to expected total size (mirrors base class behaviour) ──────────
         target = num_search_one_attempt * n_questions * args.n_samples_per_prompt
@@ -323,7 +368,8 @@ class GRPORsfExperienceMaker(NaiveExperienceMaker):
         experiences: List[Experience],
     ) -> Tuple[List[Experience], List[torch.Tensor]]:
         """
-        GRPO: rewards are already group-normalized in generate_step_samples,
-        so we just pass them through (no additional baseline subtraction).
+        GRPO: rewards are already turn-level group-normalized in
+        generate_step_samples, so we just pass them through (no additional
+        baseline subtraction).
         """
         return experiences, [exp.info["reward"] for exp in experiences]

@@ -17,6 +17,17 @@
 #
 # Usage:
 #   bash run_scripts/20_train_grpo_rsf.sh
+#
+# Sizing (design doc Section 9, D11-14 smoke run: 100 steps, 5k prompts, G=8):
+#   defaults below match that spec. Before spending a full smoke run's compute,
+#   do a cheap correctness-only dry run first (does it crash, do avg_R_total /
+#   avg_turns in the log look sane) with a tiny override, e.g.:
+#     MAX_SAMPLES=20 NUM_EPISODES=2 bash run_scripts/20_train_grpo_rsf.sh
+#   This is ablation (b) only (gold-SF reward, no ACEC belief) — ablation (b)
+#   is deliberately run before wiring the belief-based R_cov reward (design
+#   doc Section 8, risk #1: "run (b) first... most dangerous row in the
+#   paper" — if gold-SF alone already captures most of the value, that bounds
+#   how much the belief-specific investment is worth before spending on it).
 
 set -euo pipefail
 
@@ -33,11 +44,18 @@ OUTPUT_DIR="$HOME/logs/grpo_rsf_$(date +%Y%m%d_%H%M%S)"
 RETRIEVE_URL="${RETRIEVE_URL:-http://127.0.0.1:8081/search}"
 SPLIT_URL="${SPLIT_URL:-http://127.0.0.1:8082/split_query}"
 
+# ── Smoke-run knobs (design doc D11-14 defaults; override for a cheap dry run) ─
+LORA_RANK="${LORA_RANK:-64}"
+N_SAMPLES="${N_SAMPLES:-8}"        # G, rollouts per prompt
+MAX_SAMPLES="${MAX_SAMPLES:-5000}" # prompt pool size
+NUM_EPISODES="${NUM_EPISODES:-100}"
+
 mkdir -p "$OUTPUT_DIR"
 
-echo "[GRPO-RSF] Output dir: $OUTPUT_DIR"
-echo "[GRPO-RSF] Retriever:  $RETRIEVE_URL"
-echo "[GRPO-RSF] Splitter:   $SPLIT_URL"
+echo "[GRPO-RSF] Output dir:   $OUTPUT_DIR"
+echo "[GRPO-RSF] Retriever:    $RETRIEVE_URL"
+echo "[GRPO-RSF] Splitter:     $SPLIT_URL"
+echo "[GRPO-RSF] lora_rank=$LORA_RANK n_samples_per_prompt=$N_SAMPLES max_samples=$MAX_SAMPLES num_episodes=$NUM_EPISODES"
 
 # ── Training ───────────────────────────────────────────────────────────────────
 cd "$OPENRLHF_DIR"
@@ -53,15 +71,18 @@ PYTHONPATH="$OPENRLHF_DIR:$PYTHONPATH" \
     --train_batch_size 8 \
     --micro_rollout_batch_size 1 \
     --rollout_batch_size 8 \
-    --n_samples_per_prompt 4 \
+    --n_samples_per_prompt "$N_SAMPLES" \
+    --max_samples "$MAX_SAMPLES" \
     --max_epochs 1 \
-    --num_episodes 200 \
+    --num_episodes "$NUM_EPISODES" \
     --prompt_max_len 2048 \
     --generate_max_len 512 \
     --zero_stage 2 \
     --bf16 \
     --flash_attn \
     --gradient_checkpointing \
+    --lora_rank "$LORA_RANK" \
+    --lora_alpha $((LORA_RANK * 2)) \
     --actor_learning_rate 5e-7 \
     --init_kl_coef 0.01 \
     --advantage_estimator reinforce \
