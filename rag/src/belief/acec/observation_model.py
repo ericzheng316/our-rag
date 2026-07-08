@@ -139,3 +139,16 @@ class ObservationModel:
             "f1": {f"{role}|{bound}": d.to_dict() for (role, bound), d in self._f1.items()},
             "f0": {f"{role}|{bound}": d.to_dict() for (role, bound), d in self._f0.items()},
         }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, dict]) -> "ObservationModel":
+        """Inverse of to_dict() — reloads a calibrated model (e.g. from
+        run_scripts/build_acec_calibration.py's observation_model.json) so
+        test-time computation uses frozen, offline-fitted parameters
+        (design doc Section 2.2)."""
+        model = cls()
+        for bucket, target in (("f1", model._f1), ("f0", model._f0)):
+            for key, density_dict in d.get(bucket, {}).items():
+                role, bound_str = key.rsplit("|", 1)
+                target[(role, bound_str == "True")] = BetaDensity.from_dict(density_dict)
+        return model
