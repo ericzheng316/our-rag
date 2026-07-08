@@ -1,10 +1,15 @@
 """
 Minimal standalone GRPO + R_sf trainer.
-No OpenRLHF dependency — uses transformers + peft only.
+No OpenRLHF dependency — uses transformers + peft only. No deepspeed/ray/
+flash-attn (attn_implementation="eager"), so this is the cheap path for a
+correctness-only smoke test of the turn-level-advantage wiring; reach for
+the OpenRLHF path (train/R3RAG_OpenRLHF) once distributed/multi-GPU training
+at real scale is actually needed.
 
 R_sf  : marginal supporting-fact title hits per retrieval turn
 R_ans : EM exact-match at final answer
-GRPO  : group-relative advantage normalization (no critic)
+GRPO  : turn-level advantages (design doc Section 3.2), not one scalar per
+        trajectory — see turn_level_returns/turn_level_advantages below.
 """
 
 import argparse, json, math, os, re, requests, string
@@ -61,12 +66,43 @@ def exact_match(pred: str, golds: List[str]) -> bool:
     return any(norm(pred) == norm(g) for g in golds)
 
 
-def grpo_normalize(totals: List[float], eps: float = 1e-8) -> List[float]:
-    if len(totals) <= 1:
-        return [0.0] * len(totals)
-    mu = sum(totals) / len(totals)
-    sigma = (sum((r - mu) ** 2 for r in totals) / len(totals)) ** 0.5
-    return [(r - mu) / (sigma + eps) for r in totals]
+# ── Turn-level GRPO advantages (design doc Section 3.2) ────────────────────────
+# Same semantics as rag/src/belief/acec/reward.py's turn_level_returns /
+# turn_level_advantages (verified bit-for-bit identical), duplicated here
+# rather than imported so this script keeps its zero-heavy-dependency property
+# (acec/__init__.py eager-imports torch/sentence-transformers extras this
+# R_sf-only path doesn't need).
+
+def turn_level_returns(rewards_per_turn: List[float]) -> List[float]:
+    """G_{i,t} = sum_{t' >= t} r_{i,t'} for one rollout."""
+    returns = [0.0] * len(rewards_per_turn)
+    running = 0.0
+    for t in range(len(rewards_per_turn) - 1, -1, -1):
+        running += rewards_per_turn[t]
+        returns[t] = running
+    return returns
+
+
+def turn_level_advantages(group_returns: List[List[float]], eps: float = 1e-6) -> List[List[float]]:
+    """
+    A_{i,t} = (G_{i,t} - mu_t) / (sigma_t + eps), mu_t/sigma_t over rollouts
+    still alive at turn t. Falls back to the raw return when fewer than 2
+    rollouts remain alive at t.
+    """
+    max_len = max((len(r) for r in group_returns), default=0)
+    advantages = [[0.0] * len(r) for r in group_returns]
+    for t in range(max_len):
+        alive = [(i, r[t]) for i, r in enumerate(group_returns) if len(r) > t]
+        if len(alive) < 2:
+            for i, val in alive:
+                advantages[i][t] = val
+            continue
+        vals = [v for _, v in alive]
+        mu = sum(vals) / len(vals)
+        sigma = math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals))
+        for i, v in alive:
+            advantages[i][t] = (v - mu) / (sigma + eps)
+    return advantages
 
 # ── Response parser (mirrors inference_new.py) ─────────────────────────────────
 
@@ -174,15 +210,18 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
     n = 0
 
     for question_trajs in trajs_per_question:
-        r_totals = [sum(r for _, _, r in traj) for traj in question_trajs]
-        advantages = grpo_normalize(r_totals)
+        reward_lists = [[r for _, _, r in traj] for traj in question_trajs]
+        group_returns = [turn_level_returns(rl) for rl in reward_lists]
+        group_advantages = turn_level_advantages(group_returns)
 
-        for traj, adv in zip(question_trajs, advantages):
-            adv_t = torch.tensor(adv, dtype=torch.float32, device="cuda")
-
-            for inp_ids, out_ids, _ in traj:
+        for traj, advantages in zip(question_trajs, group_advantages):
+            for t, (inp_ids, out_ids, _) in enumerate(traj):
                 if out_ids.numel() == 0:
                     continue
+
+                # A_{i,t}: per-turn advantage, not one scalar for the whole
+                # trajectory — see turn_level_advantages docstring.
+                adv_t = torch.tensor(advantages[t], dtype=torch.float32, device="cuda")
 
                 full = torch.cat([inp_ids, out_ids]).unsqueeze(0)   # (1, L)
                 n_out = out_ids.shape[0]
@@ -258,6 +297,7 @@ def train(args):
 
         trajs_per_question = []
         r_totals_log = []
+        turn_counts_log = []   # sanity dashboard: turns per rollout
 
         for item in batch:
             sf    = item.get("supporting_facts") or {}
@@ -273,6 +313,7 @@ def train(args):
                                n_turns=args.n_turns, temperature=temp)
                 question_trajs.append(traj)
                 r_totals_log.append(sum(r for _, _, r in traj))
+                turn_counts_log.append(len(traj))
                 torch.cuda.empty_cache()
 
             trajs_per_question.append(question_trajs)
@@ -288,8 +329,9 @@ def train(args):
 
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
+        avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
         print(f"Episode {episode + 1:4d} | loss={loss.item():.4f} | mean_R={mean_r:.3f} | "
-              f"batch={len(batch)}q × {args.n_samples}samples")
+              f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
 
         if global_step % args.save_steps == 0:
             ckpt = os.path.join(args.save_path, f"step_{global_step}")
