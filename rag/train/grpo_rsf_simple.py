@@ -126,6 +126,23 @@ def parse_step(text: str) -> dict:
             d[key] = val
     return d
 
+# ── Chat template ──────────────────────────────────────────────────────────────
+# R3-RAG-Qwen was fine-tuned to expect its input wrapped in this Qwen chat
+# template (matches ApplyChatTemplate in the OpenRLHF experience makers /
+# inference_new.py, ported locally rather than imported to keep this script
+# dependency-light). Without it the model doesn't reliably produce the
+# "Step N:\nThe problem analysis: ..." format at all — every turn falls
+# through to the format-error branch, which looks like the model "always
+# answers in one turn" (avg_turns stuck at 1.00) when it's really just never
+# emitting parseable output.
+
+def apply_chat_template(user_content: str) -> str:
+    return (
+        "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        f"<|im_start|>user\n{user_content}<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
 # ── Single trajectory rollout ──────────────────────────────────────────────────
 
 @torch.no_grad()
@@ -144,7 +161,7 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
     found_sf: Set[str] = set()
 
     for t in range(n_turns):
-        encoding = tokenizer(context, return_tensors="pt",
+        encoding = tokenizer(apply_chat_template(context), return_tensors="pt",
                              truncation=True, max_length=1024)
         input_ids = encoding.input_ids.cuda()
 
