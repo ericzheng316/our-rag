@@ -144,11 +144,13 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
     found_sf: Set[str] = set()
 
     for t in range(n_turns):
-        input_ids = tokenizer(context, return_tensors="pt",
-                              truncation=True, max_length=1024).input_ids.cuda()
+        encoding = tokenizer(context, return_tensors="pt",
+                             truncation=True, max_length=1024)
+        input_ids = encoding.input_ids.cuda()
 
         out = model.generate(
             input_ids,
+            attention_mask=encoding.attention_mask.cuda(),
             max_new_tokens=512,
             temperature=temperature,
             do_sample=True,
