@@ -6,18 +6,19 @@
 
 set -e
 
-CORPUS_DIR=/root/data/flashrag_datasets/retrieval-corpus
-MODEL=/root/models/e5-base-v2
-INDEX_BUILDER=/root/rag/tool/FlashRAG/flashrag/retriever/index_builder.py
+REPO_ROOT="$HOME"
+CORPUS_DIR="$REPO_ROOT/data/flashrag_datasets/retrieval-corpus"
+MODEL="$REPO_ROOT/models/e5-base-v2"
+INDEX_BUILDER="$REPO_ROOT/rag/tool/FlashRAG/flashrag/retriever/index_builder.py"
 
 if [ "${MINI:-0}" = "1" ]; then
     CORPUS=${CORPUS_DIR}/wiki18_mini.jsonl
-    SAVE_DIR=/root/data/indices/e5_Flat_mini
+    SAVE_DIR="$REPO_ROOT/data/indices/e5_Flat_mini"
     echo "[$(date)] 构建 MINI 索引 (100K 语料) -> ${SAVE_DIR}"
 else
     CORPUS=${CORPUS_DIR}/wiki18_100w.jsonl
-    SAVE_DIR=/root/data/indices/e5_Flat
-    echo "[$(date)] 构建全量索引 (17.3M 语料) -> ${SAVE_DIR}"
+    SAVE_DIR="$REPO_ROOT/data/indices/e5_Flat"
+    echo "[$(date)] 构建全量索引 (17.3M 语料, fp16 向量约 26-27GB — CPU RAM 有限时建议先 MINI=1) -> ${SAVE_DIR}"
 fi
 
 mkdir -p ${SAVE_DIR}
