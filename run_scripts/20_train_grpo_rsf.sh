@@ -3,12 +3,15 @@
 #
 # Prerequisites:
 #   1. Retriever server running:  bash run_scripts/02_start_retriever.sh
-#   2. Split server running:      bash run_scripts/03_start_split_server.sh
-#   3. Training data downloaded:
+#      (split server / 03_start_split_server.sh is NOT needed by this script —
+#      experience_maker_grpo_rsf.py reads SPLIT_URL but never calls it; that's
+#      a leftover from inference_new.py's prerequisites, not this path's)
+#   2. Training data downloaded (dataset id needs the hotpotqa/ namespace —
+#      bare 'hotpot_qa' 404s on current datasets/huggingface_hub versions):
 #        python3 -c "
 #        from datasets import load_dataset; import json
-#        ds = load_dataset('hotpot_qa', 'fullwiki', split='train')
-#        with open('/root/data/flashrag_datasets/hotpotqa/train_sf.jsonl','w') as f:
+#        ds = load_dataset('hotpotqa/hotpot_qa', 'fullwiki', split='train')
+#        with open('$HOME/data/flashrag_datasets/hotpotqa/train_sf.jsonl','w') as f:
 #            for r in ds:
 #                f.write(json.dumps({'id':r['id'],'question':r['question'],
 #                  'golden_answers':[r['answer']],'supporting_facts':r['supporting_facts'],
