@@ -117,6 +117,20 @@ baseline; do not treat its prior findings as guidance for new work.
   needs the same portability fix already applied elsewhere; untested whether
   this box has the RAM/GPU budget for a full wiki18 FAISS index — see
   Environment notes below) before running ablation (b) for a real number.
+- **Full wiki18 corpus + E5 index — prebuilt, don't rebuild.** FlashRAG
+  (vendored at `rag/tool/FlashRAG/`) publishes a prebuilt e5-base-v2 Flat
+  index over wiki18_100w on ModelScope — same filenames `01_build_index.sh`/
+  `02_start_retriever.sh` already expect, so this is almost certainly the
+  original source those scripts were written against:
+  - Index: `https://www.modelscope.cn/datasets/hhjinjiajie/FlashRAG_Dataset/resolve/master/retrieval_corpus/wiki18_100w_e5_index.zip`
+  - Corpus: `https://www.modelscope.cn/datasets/hhjinjiajie/FlashRAG_Dataset/resolve/master/retrieval_corpus/wiki18_100w.jsonl`
+  Download + unzip into `$HOME/data/indices/e5_Flat/` (verify the extracted
+  index filename matches `e5_Flat.index`, or adjust the path) and
+  `$HOME/data/flashrag_datasets/retrieval-corpus/wiki18_100w.jsonl` — skips
+  `01_build_index.sh`'s multi-hour E5 encoding of 17.3M passages entirely, go
+  straight to `02_start_retriever.sh`. ModelScope (vs. HuggingFace) is also
+  the better bet network-wise from a China-based box, same reasoning as the
+  hf-mirror note for model downloads.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
