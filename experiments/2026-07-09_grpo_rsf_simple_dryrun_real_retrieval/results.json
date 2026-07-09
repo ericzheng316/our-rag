@@ -1,0 +1,20 @@
+{
+  "run_name": "grpo_rsf_simple_20260709_170234",
+  "script": "rag/train/grpo_rsf_simple.py",
+  "wrapper": "run_scripts/20b_train_grpo_rsf_simple.sh",
+  "git_commit": "0bdeb3b",
+  "config": {
+    "model_path": "R3-RAG-Qwen",
+    "max_samples": 20,
+    "num_episodes": 2,
+    "n_samples_per_prompt": 4,
+    "lora_rank": 16,
+    "attn_implementation": "sdpa",
+    "retriever": "real (wiki18_100w full index, e5-base-v2, Flat/exact search)"
+  },
+  "episodes": [
+    {"episode": 1, "loss": 0.0012, "mean_R": 0.156, "avg_turns": 2.25, "batch": "4q x 4samples"},
+    {"episode": 2, "loss": -0.0042, "mean_R": 0.150, "avg_turns": 2.81, "batch": "4q x 4samples"}
+  ],
+  "retriever_requests_served": 52
+}
