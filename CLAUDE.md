@@ -117,6 +117,34 @@ baseline; do not treat its prior findings as guidance for new work.
   needs the same portability fix already applied elsewhere; untested whether
   this box has the RAM/GPU budget for a full wiki18 FAISS index — see
   Environment notes below) before running ablation (b) for a real number.
+- **Real retriever stood up (H100 box, real wiki18 index) — hit a second,
+  more serious format bug, root-caused and fixed** (2026-07-09). With the
+  retriever actually live, avg_turns went *back down* to a flat 1.00 (worse
+  than the earlier no-retriever dry run's 1.12) — 100% format-error across
+  every rollout at every temperature 0.001–0.9. Root cause: `grpo_rsf_simple.py`
+  loads the model with `attn_implementation="eager"`. R3-RAG-Qwen is
+  fine-tuned to reproduce an exact literal template (`Step N:\nThe problem
+  analysis: ...\nThe retrieval query: ...`), and eager attention's bf16
+  numerics diverge from vLLM's (what `inference_new.py` actually uses) just
+  enough that, compounding token-by-token over the generation, the model
+  reliably stops emitting the literal `The problem analysis:` label — not a
+  parsing bug, not a chat-template bug (confirmed the template itself
+  matches `tokenizer.apply_chat_template()` almost exactly), a numerics-
+  sensitivity issue specific to eager attention on this narrowly-formatted
+  model. Confirmed by direct A/B on the identical prompt: vLLM 4/4 correct,
+  eager 0/4, `sdpa` 2/2 correct (both greedy and temp=0.7). Fixed by
+  switching to `attn_implementation="sdpa"` (built into torch, no flash-attn
+  install needed). Moral, same shape as the Week-1 NLI-scorer bug: when a
+  metric is stuck at a suspicious constant across every input, suspect the
+  inference/numerics plumbing before the higher-level logic. Also found
+  (unrelated, while comparing against the OpenRLHF path as a reference
+  implementation): `.gitignore`'s unanchored `data`/`models`/`logs` patterns
+  matched same-named directories anywhere in the tree, silently swallowing
+  `rag/train/R3RAG_OpenRLHF/openrlhf/models/` — never committed, so
+  `20_train_grpo_rsf.sh` 404s with `ModuleNotFoundError` on any fresh clone,
+  independent of the `peft` dependency issue fixed earlier. Anchored the
+  patterns; the missing `openrlhf/models/` content itself still needs
+  sourcing from elsewhere before the OpenRLHF path works on a fresh clone.
 - **Full wiki18 corpus + E5 index — prebuilt, don't rebuild.** FlashRAG
   (vendored at `rag/tool/FlashRAG/`) publishes a prebuilt e5-base-v2 Flat
   index over wiki18_100w on ModelScope — same filenames `01_build_index.sh`/
