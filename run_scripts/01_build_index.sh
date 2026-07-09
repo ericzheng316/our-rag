@@ -18,12 +18,12 @@ if [ "${MINI:-0}" = "1" ]; then
 else
     CORPUS=${CORPUS_DIR}/wiki18_100w.jsonl
     SAVE_DIR="$REPO_ROOT/data/indices/e5_Flat"
-    echo "[$(date)] 构建全量索引 (17.3M 语料, fp16 向量约 26-27GB — CPU RAM 有限时建议先 MINI=1) -> ${SAVE_DIR}"
+    echo "[$(date)] 构建全量索引 (17.3M 语料, 约 60GB — CPU RAM 有限时建议先 MINI=1;或直接用 CLAUDE.md 里记录的预构建索引,跳过这一步) -> ${SAVE_DIR}"
 fi
 
 mkdir -p ${SAVE_DIR}
 
-CUDA_VISIBLE_DEVICES=0 conda run -n rag python3 ${INDEX_BUILDER} \
+CUDA_VISIBLE_DEVICES=0 "$REPO_ROOT/rag/.venv/bin/python" ${INDEX_BUILDER} \
     --retrieval_method e5 \
     --model_path ${MODEL} \
     --corpus_path ${CORPUS} \

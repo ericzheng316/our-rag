@@ -20,7 +20,7 @@ if [ "${MINI:-0}" = "1" ]; then
 else
     INDEX="$REPO_ROOT/data/indices/e5_Flat/e5_Flat.index"
     CORPUS="$REPO_ROOT/data/flashrag_datasets/retrieval-corpus/wiki18_100w.jsonl"
-    echo "[$(date)] 启动全量 retriever 服务 (17.3M 语料, fp16 索引约 26-27GB — CPU RAM 有限时先用 MINI=1): http://${HOST}:${PORT}"
+    echo "[$(date)] 启动全量 retriever 服务 (17.3M 语料, float32 索引约 60GB, 实测 64,559,075,373 字节 — CPU RAM 有限时先用 MINI=1): http://${HOST}:${PORT}"
 fi
 
 echo "HOST=${HOST}" > "$ENV_FILE"
@@ -35,7 +35,7 @@ echo "[$(date)] === retriever starting ===" >> "${LOG}"
 
 CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 \
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 \
-conda run --no-capture-output -n rag python3 \
+"$REPO_ROOT/rag/.venv/bin/python" \
     "$REPO_ROOT/rag/benchmark/retriever/src/retrive_server.py" \
     --host ${HOST} \
     --port ${PORT} \
