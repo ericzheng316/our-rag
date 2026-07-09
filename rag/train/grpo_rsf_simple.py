@@ -1,10 +1,21 @@
 """
 Minimal standalone GRPO + R_sf trainer.
 No OpenRLHF dependency — uses transformers + peft only. No deepspeed/ray/
-flash-attn (attn_implementation="eager"), so this is the cheap path for a
-correctness-only smoke test of the turn-level-advantage wiring; reach for
-the OpenRLHF path (train/R3RAG_OpenRLHF) once distributed/multi-GPU training
-at real scale is actually needed.
+flash-attn (attn_implementation="sdpa", built into torch), so this is the
+cheap path for a correctness-only smoke test of the turn-level-advantage
+wiring; reach for the OpenRLHF path (train/R3RAG_OpenRLHF) once
+distributed/multi-GPU training at real scale is actually needed.
+
+attn_implementation must be "sdpa" (or flash-attn), not "eager": R3-RAG-Qwen
+is fine-tuned to reproduce an exact literal template ("Step N:\nThe problem
+analysis: ...\nThe retrieval query: ..."), and eager attention's bf16
+numerics diverge from vLLM's (what inference_new.py actually uses) just
+enough, compounding token-by-token, that the model reliably stops emitting
+the literal "The problem analysis:" label — 100% format-error rollouts
+across every temperature tested (0.001 to 0.9), confirmed by direct A/B
+against vLLM (4/4 correct) and sdpa (2/2 correct) on the same prompt. Not a
+parsing bug, not a chat-template bug — a numerics-sensitivity issue specific
+to eager attention on this narrowly-formatted model.
 
 R_sf  : marginal supporting-fact title hits per retrieval turn
 R_ans : EM exact-match at final answer
@@ -137,8 +148,12 @@ def parse_step(text: str) -> dict:
 # emitting parseable output.
 
 def apply_chat_template(user_content: str) -> str:
+    # "You are a helpful assistant" with no trailing period, matching the
+    # system message inference_new.py actually sends — confirmed identical to
+    # tokenizer.apply_chat_template()'s own default aside from this, and this
+    # model is sensitive enough to exact template text that it's worth matching.
     return (
-        "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n"
         f"<|im_start|>user\n{user_content}<|im_end|>\n"
         "<|im_start|>assistant\n"
     )
@@ -281,7 +296,7 @@ def train(args):
     base = AutoModelForCausalLM.from_pretrained(
         args.model_path, torch_dtype=torch.bfloat16,
         device_map="cuda", trust_remote_code=True,
-        attn_implementation="eager",
+        attn_implementation="sdpa",
     )
     lora_cfg = LoraConfig(
         r=args.lora_rank, lora_alpha=args.lora_rank * 2,

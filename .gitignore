@@ -1,9 +1,12 @@
-# 大数据目录
-data/
-models/
+# 大数据目录 (repo-root only — unanchored data//models//logs/ previously matched
+# same-named directories anywhere in the tree, e.g. silently swallowed
+# rag/train/R3RAG_OpenRLHF/openrlhf/models/ — never committed, broke that
+# training path on every fresh clone)
+/data/
+/models/
 node-v22.14.0-linux-x64/
 node.tar.xz
-logs/
+/logs/
 *.log
 
 # conda/pip 环境
@@ -52,19 +55,19 @@ rag/tool/ircot/
 # Needs an explicit !dir/ re-inclusion first since data/, models/, logs/ are
 # already blanket-ignored above; data/ cascades one level deeper to keep
 # data/flashrag_datasets/hotpotqa/ specifically.
-!data/
-data/*
-!data/flashrag_datasets/
-data/flashrag_datasets/*
-!data/flashrag_datasets/hotpotqa/
-data/flashrag_datasets/hotpotqa/*
-!data/flashrag_datasets/hotpotqa/.gitkeep
-!models/
-models/*
-!models/.gitkeep
-!logs/
-logs/*
-!logs/.gitkeep
+!/data/
+/data/*
+!/data/flashrag_datasets/
+/data/flashrag_datasets/*
+!/data/flashrag_datasets/hotpotqa/
+/data/flashrag_datasets/hotpotqa/*
+!/data/flashrag_datasets/hotpotqa/.gitkeep
+!/models/
+/models/*
+!/models/.gitkeep
+!/logs/
+/logs/*
+!/logs/.gitkeep
 
 # Runtime-generated, per-machine (written by 02_start_retriever.sh /
 # 03_start_split_server.sh with that machine's actual IP) — never a source
