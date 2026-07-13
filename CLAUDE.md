@@ -159,6 +159,53 @@ baseline; do not treat its prior findings as guidance for new work.
   straight to `02_start_retriever.sh`. ModelScope (vs. HuggingFace) is also
   the better bet network-wise from a China-based box, same reasoning as the
   hf-mirror note for model downloads.
+- **`openrlhf/models/` recovered from upstream** (2026-07-09): the missing
+  directory noted above was never committed anywhere in this repo's history
+  (confirmed: not on the H100 box that had a working copy either — that copy
+  was untracked local state, not in git). Recovered from
+  `github.com/Yuan-Li-FNLP/R3-RAG` (same authors as R3-RAG-Qwen; this whole
+  `rag/train/R3RAG_OpenRLHF/` tree was originally vendored from there —
+  confirmed by diffing `experience_maker.py` byte-for-byte identical against
+  that repo). `20_train_grpo_rsf.sh`'s import chain now gets past
+  `ModuleNotFoundError` and fails later, on the actually-still-missing
+  `deepspeed` — see next entry for why that path isn't worth chasing further
+  right now.
+- **`grpo_rsf_vllm.py` added — vLLM-accelerated rollout generation, UNTESTED**
+  (2026-07-09, GPU box was off when written). `grpo_rsf_simple.py`'s serial
+  one-rollout-at-a-time HF `.generate()` measured at ~17s/rollout — the
+  design's actual smoke-run scale (100 steps, 5k prompts, G=8 ≈ 6400
+  rollouts) would be ~30h on one GPU. Checked whether `20_train_grpo_rsf.sh`
+  (OpenRLHF) would do better and it would not: `GRPORsfExperienceMaker`
+  extends `NaiveExperienceMaker`, not the vLLM-capable `RemoteExperienceMaker`
+  — it's the same one-at-a-time `Actor.generate()` (confirmed: `actor.py`
+  line 147 is a thin wrapper around plain HF `.generate()`), so OpenRLHF
+  would add deepspeed/ray overhead with no throughput win on a single GPU.
+  OpenRLHF's `Actor` also hardcodes `attn_implementation = "eager"` unless
+  `use_flash_attention_2=True` — no `sdpa` option — so it would hit the exact
+  format bug above unless flash-attn is actually installed (the
+  `USE_FLASH_ATTN=0` skip-it escape hatch in `20_train_grpo_rsf.sh` would
+  silently produce the same 100%-format-failure results grpo_rsf_simple.py
+  hit before the sdpa fix). `requirements.txt` also pins
+  `transformers==4.46.3`/`deepspeed==0.15.0` against the venv's actual
+  `transformers 5.13.0` (installed for vLLM/sentence-transformers) — a real
+  downgrade/conflict risk, unverified whether deepspeed 0.15.0 even builds
+  against torch 2.11.0. Given all that, built `grpo_rsf_vllm.py` instead:
+  vLLM (`enable_lora=True`) generates rollouts batched at each turn boundary
+  (already confirmed both fast and format-correct for this model, see above
+  entries); after every gradient step the updated LoRA adapter is
+  hot-swapped into vLLM via a fresh `LoRARequest` (new id + path each step);
+  the actual policy/ref log-probs and backward pass still run on a separate
+  HF+PEFT model, reusing `grpo_rsf_simple.py`'s `grpo_loss_fn` unchanged.
+  vLLM API usage (`LoRARequest`, `LLM(enable_lora=..., max_lora_rank=...)`,
+  `SamplingParams.max_tokens`, `RequestOutput.prompt_token_ids` /
+  `CompletionOutput.token_ids`) was checked against the actual
+  `vllm-project/vllm` source (not from memory) to reduce API-mismatch risk,
+  but the script has **not been run** — known risk areas (vLLM's LoRA layer
+  coverage for `target_modules="all-linear"`, `max_lora_rank` value
+  restrictions, GPU memory headroom for holding both the vLLM engine and the
+  separate training model) are flagged in its module docstring. Run the tiny
+  correctness pass documented in `20c_train_grpo_rsf_vllm.sh` before trusting
+  the full smoke-run-scale defaults.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
