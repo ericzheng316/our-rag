@@ -170,8 +170,8 @@ baseline; do not treat its prior findings as guidance for new work.
   `ModuleNotFoundError` and fails later, on the actually-still-missing
   `deepspeed` — see next entry for why that path isn't worth chasing further
   right now.
-- **`grpo_rsf_vllm.py` added — vLLM-accelerated rollout generation, UNTESTED**
-  (2026-07-09, GPU box was off when written). `grpo_rsf_simple.py`'s serial
+- **`grpo_rsf_vllm.py` added (2026-07-09), then validated live (2026-07-13)
+  — vLLM+LoRA hybrid works end to end.** Written while the GPU box was off. `grpo_rsf_simple.py`'s serial
   one-rollout-at-a-time HF `.generate()` measured at ~17s/rollout — the
   design's actual smoke-run scale (100 steps, 5k prompts, G=8 ≈ 6400
   rollouts) would be ~30h on one GPU. Checked whether `20_train_grpo_rsf.sh`
@@ -200,12 +200,36 @@ baseline; do not treat its prior findings as guidance for new work.
   `SamplingParams.max_tokens`, `RequestOutput.prompt_token_ids` /
   `CompletionOutput.token_ids`) was checked against the actual
   `vllm-project/vllm` source (not from memory) to reduce API-mismatch risk,
-  but the script has **not been run** — known risk areas (vLLM's LoRA layer
-  coverage for `target_modules="all-linear"`, `max_lora_rank` value
-  restrictions, GPU memory headroom for holding both the vLLM engine and the
-  separate training model) are flagged in its module docstring. Run the tiny
-  correctness pass documented in `20c_train_grpo_rsf_vllm.sh` before trusting
-  the full smoke-run-scale defaults.
+  and this paid off — the known risk areas flagged in the module docstring
+  (LoRA coverage for `target_modules="all-linear"`, `max_lora_rank`, GPU
+  memory for two loaded model copies) turned out fine on the first real run.
+- **First live run (2026-07-13), 20-sample/3-episode correctness check,
+  real retriever: works, one real bug found and fixed.** First attempt
+  (commit `17ff6f8`) crashed the retriever mid-run: a
+  `ThreadPoolExecutor(max_workers=16)` around each turn's batch of
+  retrieval calls (added on the theory that HTTP calls are I/O-bound, so
+  why not parallelize them) sent too many concurrent requests at
+  `retrieve_server.py`'s single-request OpenBLAS-threaded E5 encoding
+  (`OMP/OPENBLAS/MKL_NUM_THREADS=8` each) — `BLAS: Program is Terminated.
+  Because you tried to allocate too many memory regions.` Notably, the run
+  *didn't crash outright* even after the retriever died —
+  `grpo_rsf_simple.py`'s existing `_retrieve()` exception handling (3
+  retries → empty list) kept training going with degraded reward for the
+  rest of that run. Reverted to serial retrieval (commit `5944945`,
+  retrieval was never the bottleneck this script exists to fix) and reran
+  clean: 0 connection errors, 140 retrieval requests served, retriever
+  never went down. Results: avg_turns 2.38–2.88, mean_R positive throughout
+  (0.161/0.345/0.615) — same range as `grpo_rsf_simple.py`'s already-
+  validated real-retrieval run, confirming vLLM-generated rollouts are
+  equally format-correct, at a fraction of the wall-clock. GPU memory with
+  *both* the vLLM engine and the separate HF+PEFT training model loaded:
+  63.1/80 GiB — comfortable headroom. Full writeup:
+  `experiments/2026-07-13_grpo_rsf_vllm_first_validation/`. This is a
+  correctness check only, same caveat as every prior dry run — not an
+  ablation-(b) result. Next: scale to the actual design-doc smoke-run spec
+  (LoRA r=64, G=8, 100 episodes, 5k prompts — already `20c_train_grpo_rsf_vllm.sh`'s
+  defaults, no env overrides needed) and get a real wall-clock number
+  against the ~30h serial estimate this script was built to beat.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of

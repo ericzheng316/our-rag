@@ -1,0 +1,25 @@
+{
+  "run_name": "grpo_rsf_vllm_20260713_131247",
+  "script": "rag/train/grpo_rsf_vllm.py",
+  "wrapper": "run_scripts/20c_train_grpo_rsf_vllm.sh",
+  "git_commit": "5944945",
+  "note": "second attempt; first attempt (commit 17ff6f8, run grpo_rsf_vllm_20260713_130046) crashed the retriever via a since-reverted ThreadPoolExecutor(max_workers=16) concurrency bug, see notes.md",
+  "config": {
+    "model_path": "R3-RAG-Qwen",
+    "max_samples": 20,
+    "num_episodes": 3,
+    "n_samples_per_prompt": 4,
+    "batch_size": 8,
+    "lora_rank": 16,
+    "vllm_gpu_mem_frac": 0.45,
+    "retriever": "real (wiki18_100w full index, e5-base-v2, Flat/exact search)"
+  },
+  "episodes": [
+    {"episode": 1, "loss": -0.0010, "mean_R": 0.161, "avg_turns": 2.72, "batch": "8q x 4samples"},
+    {"episode": 2, "loss": -0.0009, "mean_R": 0.345, "avg_turns": 2.88, "batch": "8q x 4samples"},
+    {"episode": 3, "loss": -0.0043, "mean_R": 0.615, "avg_turns": 2.38, "batch": "4q x 4samples"}
+  ],
+  "connection_errors_this_run": 0,
+  "gpu_mem_used_mib_both_models_loaded": 63153,
+  "gpu_mem_total_mib": 81559
+}
