@@ -51,7 +51,6 @@ areas to check on the first real run:
 """
 
 import argparse, os, shutil
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple
 
 import torch
@@ -143,12 +142,18 @@ def vllm_rollout_batch(
                 s["turns"].append((input_ids, new_ids, -LAMBDA_FMT))
                 s["done"] = True
 
-        # Retrieval calls are I/O-bound HTTP requests, not GPU work — run this
-        # turn's batch of them concurrently rather than serially.
+        # Retrieval calls, serial. Tried concurrent.futures.ThreadPoolExecutor
+        # here first (up to 16 workers) on the theory that these are I/O-bound
+        # HTTP calls, not GPU work — that many simultaneous requests crashed
+        # the retriever server instead ("BLAS: Program is Terminated. Because
+        # you tried to allocate too many memory regions.", retrieve_server.py
+        # runs single-request OpenBLAS-threaded E5 encoding, OMP/OPENBLAS/MKL_
+        # NUM_THREADS=8 each — it was never built to take concurrent requests,
+        # and retrieval was never the bottleneck grpo_rsf_vllm.py exists to
+        # fix in the first place, so just don't risk it.
         if pending_retrieval:
             queries = [state[i]["_pending"][2]["query"] for i in pending_retrieval]
-            with ThreadPoolExecutor(max_workers=min(16, len(queries))) as ex:
-                docs_list = list(ex.map(_retrieve, queries))
+            docs_list = [_retrieve(q) for q in queries]
 
             for i, docs in zip(pending_retrieval, docs_list):
                 s = state[i]
