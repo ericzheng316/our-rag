@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import argparse
 import logging
+import os
 import sys
 import faiss
 faiss.omp_set_num_threads(8)
@@ -71,7 +72,14 @@ if __name__ == "__main__":
         'use_retrieval_cache': False,
         'retrieval_cache_path': None,
         'use_reranker': False,
-        'faiss_gpu': False,
+        # Off by default (matches the CPU-FAISS behavior this box has always
+        # run with). FAISS_GPU=1 (set by 02_start_retriever.sh's GPU_ID/
+        # FAISS_GPU knobs, e.g. a dedicated second card) turns it on — see
+        # flashrag/retriever/retriever.py's load_index(): faiss.
+        # index_cpu_to_all_gpus(...) moves the index to every GPU this
+        # process's CUDA_VISIBLE_DEVICES exposes, so pinning this process to
+        # one GPU (via GPU_ID) is what keeps it off the training GPU.
+        'faiss_gpu': os.environ.get("FAISS_GPU", "0") == "1",
         'use_sentence_transformer': False,
         'retrieval_pooling_method': 'mean',
         'instruction': None,

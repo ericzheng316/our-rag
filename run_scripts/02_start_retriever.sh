@@ -3,8 +3,20 @@
 # 用法:
 #   MINI=1 bash 02_start_retriever.sh   -> 使用 mini 索引 (smoke test)
 #   bash 02_start_retriever.sh           -> 使用全量索引
+#   GPU_ID=1 FAISS_GPU=1 bash 02_start_retriever.sh
+#       -> 双卡场景:检索(E5 编码 + FAISS 搜索)整体挪到第二张卡,
+#          训练那张卡(GPU 0)不再跟检索抢显存/算力。FAISS_GPU=1 把
+#          faiss_gpu 从 False 打开 —— FlashRAG 的 DenseRetriever 用
+#          faiss.index_cpu_to_all_gpus(...)(retriever.py:399),即"把索引
+#          搬到这个进程能看到的所有 GPU 上",所以只要 GPU_ID 把
+#          CUDA_VISIBLE_DEVICES 锁到第二张卡,索引就只会搬到那一张卡,
+#          不会跟训练那张卡冲突。默认(不设这两个变量)保持现在单卡 CPU-
+#          FAISS 的行为不变,没拿到第二张卡之前不影响任何现有脚本。
 
 set -e
+
+GPU_ID="${GPU_ID:-0}"
+FAISS_GPU="${FAISS_GPU:-0}"
 
 REPO_ROOT="$HOME"
 ENV_FILE="$(dirname "$0")/.env_retriever"
@@ -33,8 +45,11 @@ LOG="$REPO_ROOT/logs/retriever.log"
 mkdir -p "$REPO_ROOT/logs"
 echo "[$(date)] === retriever starting ===" >> "${LOG}"
 
-CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 \
+echo "[$(date)] GPU_ID=${GPU_ID} FAISS_GPU=${FAISS_GPU}"
+
+CUDA_VISIBLE_DEVICES=${GPU_ID} PYTHONUNBUFFERED=1 \
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 \
+FAISS_GPU=${FAISS_GPU} \
 "$REPO_ROOT/rag/.venv/bin/python" \
     "$REPO_ROOT/rag/benchmark/retriever/src/retrive_server.py" \
     --host ${HOST} \
