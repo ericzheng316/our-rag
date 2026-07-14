@@ -367,7 +367,6 @@ def train(args):
         model.train()
         optimizer.zero_grad()
         loss = grpo_loss_fn(model, trajs_per_question, kl_coef=args.kl_coef)
-        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         torch.cuda.empty_cache()
@@ -375,7 +374,7 @@ def train(args):
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
-        print(f"Episode {episode + 1:4d} | loss={loss.item():.4f} | mean_R={mean_r:.3f} | "
+        print(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
               f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
 
         # Hot-swap: save the just-updated adapter under a fresh id/path (not

@@ -239,8 +239,19 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
 
     Uses a single model: LoRA enabled for policy, disabled for reference.
     This halves VRAM vs loading two separate model copies.
+
+    Calls .backward() per turn and returns a float (not a loss tensor) —
+    accumulating one autograd graph across a whole episode (up to
+    batch_size x n_samples x n_turns forward passes) OOMs at the real
+    design-doc scale (G=8, lora_rank=64: hit CUDA OOM on the very first
+    episode, 2026-07-14). Backward per turn frees each turn's graph
+    immediately; gradients accumulate in .grad across calls (matches
+    autograd's default behavior), then get scaled by 1/n at the end so the
+    net effect on the gradient is identical to the old single
+    backward-on-the-mean call. Caller must NOT call loss.backward() again —
+    just optimizer.step() after this returns.
     """
-    total_loss = torch.tensor(0.0, device="cuda", requires_grad=True)
+    total_loss = 0.0
     n = 0
 
     for question_trajs in trajs_per_question:
@@ -278,8 +289,14 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
 
                 pg  = -adv_t * token_lp.mean()
                 kl  = (token_lp - ref_token_lp).mean()   # approx KL
-                total_loss = total_loss + pg + kl_coef * kl
+                turn_loss = pg + kl_coef * kl
+                turn_loss.backward()
+                total_loss += turn_loss.item()
                 n += 1
+
+    for p in model.parameters():
+        if p.grad is not None:
+            p.grad /= max(n, 1)
 
     return total_loss / max(n, 1)
 
@@ -356,7 +373,6 @@ def train(args):
         model.train()
         optimizer.zero_grad()
         loss = grpo_loss_fn(model, trajs_per_question, kl_coef=args.kl_coef)
-        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         torch.cuda.empty_cache()
@@ -364,7 +380,7 @@ def train(args):
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
-        print(f"Episode {episode + 1:4d} | loss={loss.item():.4f} | mean_R={mean_r:.3f} | "
+        print(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
               f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
 
         if global_step % args.save_steps == 0:
