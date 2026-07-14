@@ -90,6 +90,13 @@ if [[ "$USE_ACEC" == "1" ]]; then
     if [[ -n "$ACEC_OBSERVATION_MODEL" ]]; then
         args+=(--acec_observation_model "$ACEC_OBSERVATION_MODEL")
     fi
+    # CrossEncoder(model_name) still calls hf_hub_download to check/fetch the
+    # model even when it's already cached — needs the China-network mirror
+    # (direct huggingface.co hangs/fails) and HF_HOME pointed at the actual
+    # persistent cache, or it tries the wrong (empty, ephemeral) default
+    # ~/.cache/huggingface and then the network call on top of that.
+    export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+    export HF_HOME="${HF_HOME:-$HOME/data/hf_cache}"
 fi
 
 "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/train/grpo_rsf_vllm.py" \
