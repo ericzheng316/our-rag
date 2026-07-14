@@ -48,10 +48,38 @@ areas to check on the first real run:
     re-tokenizing decoded text, on the assumption vLLM uses the exact same
     tokenizer as the HF+PEFT side (same model_path) — should be safe, but
     worth a spot-check against grpo_rsf_simple.py's token ids on first run.
+
+VALIDATED (2026-07-13): the vLLM+LoRA-hotswap generation/training loop
+itself ran end to end (see experiments/2026-07-13_grpo_rsf_vllm_first_
+validation/) — the risk areas above turned out fine. --use_acec below is
+new, unvalidated code layered on top of that working base.
+
+--use_acec: reward mode. Design doc Section 8 risk #1 calls ablation (b)
+(gold-SF reward, no belief — the default here) "the most dangerous row in
+the paper": it might already capture most of the achievable gain, in which
+case belief's marginal value is narrow. Running (b) alone doesn't test
+that risk either way — only running the belief-shaped R_cov arm does. When
+set, each rollout gets its own ACECBeliefState (no gold labels used at
+rollout time, per the design's own principle); reward per retrieval turn
+becomes potential_shaped_reward(coverage_before, coverage_after) instead of
+the gold supporting-facts marginal. Needs three more things loaded onto the
+same GPU (E5Embedder for the action labeler, the NLI cross-encoder, and
+optionally the Week-1 calibrated observation model) — real added GPU memory
+and per-turn latency (an extra NLI forward pass per retrieved doc) on top
+of an already GPU-bound pipeline; tune --vllm_gpu_mem_frac down if tight.
+The Week-1 calibration artifact (run_scripts/15_build_acec_calibration.sh's
+--acec_observation_model output, observation_model.json) was NOT found
+under $HOME/logs/acec_calibration_pilot/ on this persistent volume as of
+2026-07-13 (empty directory) despite CLAUDE.md recording a passing Week-1
+gate — that calibration may have been produced on a different box/run
+that was never copied here. Verify it exists (or re-run 14/15) before
+trusting --acec_observation_model; omitting it falls back to uncalibrated
+ACECConfig() defaults with a printed warning, which is a real regression
+from the calibrated Week-1 numbers, not a silent equivalent.
 """
 
 import argparse, os, shutil
-from typing import Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 from datasets import load_dataset
@@ -66,6 +94,51 @@ from grpo_rsf_simple import (
     rsf_marginal,
 )
 
+BeliefFactory = Callable[[str], Any]   # str (question) -> ACECBeliefState
+
+
+def make_belief_factory(args) -> BeliefFactory:
+    """
+    Lazily imports rag/src/belief/acec (only when --use_acec is set, so the
+    default gold-SF path stays exactly as dependency-light as before) and
+    returns a per-question ACECBeliefState factory, mirroring the exact
+    construction inference_new.py already validated for the Week-2 VOI gate
+    probe (same NLI scorer, same calibration-loading path).
+    """
+    import sys
+    rag_src = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+    sys.path.insert(0, rag_src)
+
+    from belief.obs_extractor import E5Embedder
+    from belief.acec import ACECBeliefState, ACECConfig, CrossEncoderNLIScorer, E5QueryEmbedder
+    from belief.acec.offline_fit import hit_rates_to_beta_priors, load_calibrated_observation_model
+
+    print(f"[GRPO-RSF-vLLM] [ACEC] Loading E5Embedder for action labeler: {args.e5_model_path}")
+    acec_embedder = E5QueryEmbedder(E5Embedder(args.e5_model_path))
+
+    print(f"[GRPO-RSF-vLLM] [ACEC] Loading NLI cross-encoder: {args.acec_nli_model}")
+    acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
+
+    acec_config = ACECConfig()
+    if args.acec_observation_model:
+        obs_model, hit_rates = load_calibrated_observation_model(args.acec_observation_model)
+        acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
+        print(f"[GRPO-RSF-vLLM] [ACEC] Loaded calibrated observation model from {args.acec_observation_model}")
+    else:
+        obs_model = None
+        print("[GRPO-RSF-vLLM] [ACEC] WARNING: no --acec_observation_model given — "
+              "using UNCALIBRATED ACECConfig() defaults (not the Week-1 gate's fitted "
+              "tau_new/hit-rate priors). This is a real regression, not a safe fallback.")
+    if args.acec_tau_new is not None:
+        acec_config.tau_new = args.acec_tau_new
+
+    def factory(question: str):
+        belief = ACECBeliefState(acec_embedder, acec_nli_scorer, config=acec_config, obs_model=obs_model)
+        belief.reset(question)
+        return belief
+
+    return factory
+
 # ── Batched, turn-boundary rollout collection via vLLM ──────────────────────────
 
 def vllm_rollout_batch(
@@ -74,6 +147,7 @@ def vllm_rollout_batch(
     questions: List[Dict],
     n_samples: int,
     n_turns: int = 5,
+    belief_factory: Optional[BeliefFactory] = None,
 ) -> List[List[List[Tuple[torch.Tensor, torch.Tensor, float]]]]:
     """
     questions: list of {"question": str, "sf_titles": List[str],
@@ -85,6 +159,12 @@ def vllm_rollout_batch(
     grpo_rsf_simple.py's rollout() returns per-rollout, just collected
     turn-batched across the whole (questions x n_samples) pool instead of
     one rollout at a time.
+
+    belief_factory: when given, per-turn reward for retrieval steps comes
+    from ACECBeliefState.reward() (potential-shaped coverage delta) instead
+    of the gold supporting-facts marginal — see module docstring's
+    --use_acec section. Each rollout gets its own independent belief state
+    (same lifetime as its context/retrieved_ids).
     """
     n_q = len(questions)
     state = []
@@ -95,6 +175,7 @@ def vllm_rollout_batch(
                 "context": f"The question: {item['question']}",
                 "retrieved_ids": [],
                 "found_sf": set(),
+                "belief": belief_factory(item["question"]) if belief_factory else None,
                 "temperature": 0.3 + g * 0.2,   # same diversity schedule as grpo_rsf_simple.py
                 "turns": [],
                 "done": False,
@@ -124,6 +205,9 @@ def vllm_rollout_batch(
             d = parse_step(step_text)
 
             if not d.get("analysis"):
+                # Format error is a code-level penalty, orthogonal to reward
+                # mode — no belief.turn() call either way, there's no action
+                # to label when the model didn't produce parseable output.
                 s["turns"].append((input_ids, new_ids, -LAMBDA_FMT))
                 s["done"] = True
                 continue
@@ -131,6 +215,9 @@ def vllm_rollout_batch(
             if d.get("answer"):
                 golds = questions[s["qi"]]["golden_answers"]
                 r_ans = LAMBDA_ANS if exact_match(d["answer"], golds) else 0.0
+                if s["belief"] is not None:
+                    result = s["belief"].turn(query=None, new_docs=[], is_answer=True)
+                    r_ans = s["belief"].reward(result, answer_reward=r_ans)
                 s["turns"].append((input_ids, new_ids, r_ans))
                 s["done"] = True
                 continue
@@ -160,15 +247,24 @@ def vllm_rollout_batch(
                 input_ids, new_ids, d = s.pop("_pending")
                 sf_titles = questions[s["qi"]]["sf_titles"]
 
-                new_docs = []
+                new_doc_dicts = []
                 for doc in docs:
                     if doc.get("id") not in s["retrieved_ids"] and len(s["retrieved_ids"]) < MAX_DOCS:
                         s["retrieved_ids"].append(doc["id"])
-                        new_docs.append(doc.get("contents", ""))
-                doc_text = "\n".join(new_docs)
+                        new_doc_dicts.append(doc)
+                doc_text = "\n".join(doc.get("contents", "") for doc in new_doc_dicts)
 
-                r_sf, s["found_sf"] = rsf_marginal(doc_text, sf_titles, s["found_sf"])
-                s["turns"].append((input_ids, new_ids, LAMBDA_SF * r_sf))
+                if s["belief"] is not None:
+                    # No gold labels here by design (ACECBeliefState's own
+                    # principle) — new_doc_dicts (raw {"contents": ...}
+                    # dicts, not the concatenated doc_text string) go straight
+                    # to the NLI-scored coverage update.
+                    result = s["belief"].turn(query=d["query"], new_docs=new_doc_dicts)
+                    r_turn = s["belief"].reward(result)
+                else:
+                    r_sf, s["found_sf"] = rsf_marginal(doc_text, sf_titles, s["found_sf"])
+                    r_turn = LAMBDA_SF * r_sf
+                s["turns"].append((input_ids, new_ids, r_turn))
 
                 step_str = (f"Step {t + 1}:\nThe problem analysis: {d['analysis']}\n"
                             f"The retrieval query: {d['query']}\n"
@@ -224,6 +320,8 @@ def train(args):
         lr=args.lr, weight_decay=0.01,
     )
 
+    belief_factory = make_belief_factory(args) if args.use_acec else None
+
     ds = load_dataset("json", data_files=args.data_path)["train"]
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
@@ -260,6 +358,7 @@ def train(args):
 
         trajs_per_question = vllm_rollout_batch(
             llm, lora_request, questions, args.n_samples, args.n_turns,
+            belief_factory=belief_factory,
         )
 
         r_totals_log = [sum(r for _, _, r in traj) for qt in trajs_per_question for traj in qt]
@@ -319,5 +418,23 @@ if __name__ == "__main__":
                          help="fraction of GPU memory for the vLLM engine; "
                               "the rest is left for the separate HF+PEFT "
                               "training model. Tune down if OOM.")
+    parser.add_argument("--use_acec", action="store_true", default=False,
+                         help="Use ACECBeliefState's potential-shaped coverage "
+                              "reward (R_cov) instead of the gold supporting-"
+                              "facts marginal for retrieval-turn rewards. See "
+                              "module docstring's --use_acec section.")
+    parser.add_argument("--e5_model_path", type=str,
+                         default=os.path.join(os.path.expanduser("~"), "models", "e5-base-v2"),
+                         help="Only used when --use_acec is set (ACEC's action labeler).")
+    parser.add_argument("--acec_nli_model", type=str, default="cross-encoder/nli-deberta-v3-base",
+                         help="Only used when --use_acec is set.")
+    parser.add_argument("--acec_observation_model", type=str, default=None,
+                         help="Path to the Week-1 calibration's observation_model.json "
+                              "(run_scripts/15_build_acec_calibration.sh's --out_dir). "
+                              "Only used when --use_acec is set; omitting it falls back "
+                              "to uncalibrated ACECConfig() defaults (see module docstring).")
+    parser.add_argument("--acec_tau_new", type=float, default=None,
+                         help="Optional override for ACECConfig.tau_new. Only used when "
+                              "--use_acec is set.")
     args = parser.parse_args()
     train(args)
