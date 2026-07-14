@@ -68,6 +68,39 @@ def _retrieve(query: str) -> List[dict]:
     return []
 
 
+def _retrieve_batch(queries: List[str]) -> List[List[dict]]:
+    """
+    Same server call as _retrieve, but for N queries in one request instead
+    of N serial requests. retrieve_server.py's /search endpoint natively
+    batches (dense_retriever.batch_search over the whole `querys` list, one
+    FAISS call), so this is the intended usage — not the same thing as the
+    ThreadPoolExecutor concurrency that crashed the retriever in 2026-07-13
+    (that was N *simultaneous* independent requests each spinning up their
+    own OpenBLAS thread pool; this is one request, processed by the server's
+    single fixed 8-thread pool, just with more work in it). Cuts N HTTP
+    round-trips down to 1 and lets FAISS batch the distance computation
+    instead of N separate matrix-vector products — this is the actual lever
+    for retrieval throughput, not adding more training-side GPUs (the
+    2026-07-14 head-to-head run's bottleneck was CPU-bound serial FAISS
+    search, not GPU compute — see retrive_server.py's faiss_gpu=False).
+    """
+    if not queries:
+        return []
+    assert RETRIEVE_URL, "RETRIEVE_URL not set"
+    for _ in range(3):
+        try:
+            r = requests.post(RETRIEVE_URL,
+                              json={"querys": queries},
+                              headers={"Content-Type": "application/json"},
+                              timeout=60)
+            if r.status_code == 200:
+                data = r.json()
+                return [docs[:RETRIEVE_K] for docs in data]
+        except Exception as e:
+            log.warning(f"[retrieve_batch] {e}")
+    return [[] for _ in queries]
+
+
 def rsf_marginal(doc_text: str, sf_titles: List[str], found: Set[str]) -> Tuple[float, Set[str]]:
     if not sf_titles:
         return 0.0, found

@@ -90,7 +90,7 @@ from vllm.lora.request import LoRARequest
 
 from grpo_rsf_simple import (
     LAMBDA_ANS, LAMBDA_FMT, LAMBDA_SF, MAX_DOCS, STOP_TOKEN,
-    _retrieve, apply_chat_template, exact_match, grpo_loss_fn, parse_step,
+    _retrieve_batch, apply_chat_template, exact_match, grpo_loss_fn, parse_step,
     rsf_marginal,
 )
 
@@ -235,18 +235,23 @@ def vllm_rollout_batch(
                 s["turns"].append((input_ids, new_ids, -LAMBDA_FMT))
                 s["done"] = True
 
-        # Retrieval calls, serial. Tried concurrent.futures.ThreadPoolExecutor
-        # here first (up to 16 workers) on the theory that these are I/O-bound
-        # HTTP calls, not GPU work — that many simultaneous requests crashed
-        # the retriever server instead ("BLAS: Program is Terminated. Because
-        # you tried to allocate too many memory regions.", retrieve_server.py
-        # runs single-request OpenBLAS-threaded E5 encoding, OMP/OPENBLAS/MKL_
-        # NUM_THREADS=8 each — it was never built to take concurrent requests,
-        # and retrieval was never the bottleneck grpo_rsf_vllm.py exists to
-        # fix in the first place, so just don't risk it.
+        # One batched request for the whole turn's queries, not N serial
+        # ones. Tried concurrent.futures.ThreadPoolExecutor (N *simultaneous*
+        # independent requests) first — that crashed the retriever ("BLAS:
+        # Program is Terminated. Because you tried to allocate too many
+        # memory regions.", retrieve_server.py's single fixed 8-thread FAISS
+        # pool was never built to take concurrent requests). Batching one
+        # request with all N queries inside it is different and safe: the
+        # server's /search endpoint natively batches (dense_retriever.
+        # batch_search over the whole list, one FAISS call, still just one
+        # request at a time) — see _retrieve_batch's docstring. This is the
+        # actual lever for retrieval throughput (2026-07-14 measured ~0.3-0.5
+        # req/s serial, CPU-bound FAISS search over the 17.3M-doc index,
+        # retrive_server.py's faiss_gpu=False — not GPU-bound, so more
+        # training-side GPUs would not have helped this).
         if pending_retrieval:
             queries = [state[i]["_pending"][2]["query"] for i in pending_retrieval]
-            docs_list = [_retrieve(q) for q in queries]
+            docs_list = _retrieve_batch(queries)
 
             for i, docs in zip(pending_retrieval, docs_list):
                 s = state[i]
