@@ -1,0 +1,45 @@
+{
+  "note": "PRELIMINARY DATA ONLY — too early to draw a conclusion (see notes.md). 25 episodes is far below the design-doc smoke run (100 episodes) or a full epoch (1000 episodes for 8k prompts), and this is a single run per arm, not repeated for noise.",
+  "shared_config": {
+    "model_path": "R3-RAG-Qwen",
+    "max_samples": 200,
+    "num_episodes": 25,
+    "n_samples_per_prompt": 8,
+    "batch_size": 8,
+    "lora_rank": 64,
+    "vllm_gpu_mem_frac": 0.45,
+    "retriever": "real (wiki18_100w full index, e5-base-v2, Flat/exact search, CPU FAISS, serial per-query requests — batched-retrieval fix (commit f51b942) landed AFTER both these runs, not reflected here",
+    "note_on_data": "no repeated questions within a run — max_samples=200 exactly matches num_episodes(25) x batch_size(8), so all 200 questions are distinct across the run"
+  },
+  "gold_sf": {
+    "run_name": "grpo_rsf_vllm_20260714_111735",
+    "git_commit_at_run": "3e84cdb (turn-level backward OOM fix; predates the logging fix c506358, so this run's raw log had the print-buffering bug — episodes recovered from the buffered dump on process exit, not live)",
+    "wall_clock": "2h11m07s (11:17:35 - 13:28:42)",
+    "mean_R_per_episode": [0.133, 0.303, 0.407, 0.522, 0.235, 0.520, 0.275, 0.149, 0.532, 0.374, 0.522, 0.352, 0.509, 0.381, 0.223, 0.395, 0.470, 0.515, 0.575, 0.558, 0.298, 0.630, 0.565, 0.544, 0.497],
+    "avg_turns_per_episode": [2.45, 2.44, 2.59, 2.41, 1.92, 2.92, 2.12, 2.36, 2.53, 2.50, 2.72, 3.03, 2.44, 2.36, 2.44, 2.47, 2.81, 2.47, 2.64, 2.67, 2.81, 2.88, 3.06, 2.77, 3.02],
+    "mean_R_avg": 0.419,
+    "mean_R_std": 0.139,
+    "mean_R_first12_avg": 0.360,
+    "mean_R_last13_avg": 0.474,
+    "avg_turns_avg": 2.593
+  },
+  "acec": {
+    "run_name": "grpo_rsf_vllm_20260714_133941",
+    "git_commit_at_run": "c506358 (logging fix live — episodes confirmed streaming to log in real time, not buffered)",
+    "wall_clock": "2h01m50s (13:39:41 - 15:41:31)",
+    "acec_observation_model": "/root/logs/acec_calibration_pilot/observation_model.json (Week-1 calibrated, GATE PASS held-out AUC 0.875)",
+    "mean_R_per_episode": [0.050, 0.003, 0.119, 0.250, 0.080, 0.288, 0.022, 0.047, 0.236, 0.149, 0.221, 0.106, 0.160, 0.226, 0.144, 0.304, 0.082, 0.201, 0.211, 0.159, 0.089, 0.323, 0.261, 0.227, 0.201],
+    "avg_turns_per_episode": [2.44, 2.62, 2.59, 2.39, 1.88, 2.92, 2.02, 2.25, 2.55, 2.53, 2.69, 2.84, 2.39, 2.25, 2.28, 2.30, 2.48, 1.98, 2.44, 2.56, 2.55, 2.45, 2.72, 2.39, 2.89],
+    "mean_R_avg": 0.166,
+    "mean_R_std": 0.089,
+    "mean_R_first12_avg": 0.131,
+    "mean_R_last13_avg": 0.199,
+    "avg_turns_avg": 2.456
+  },
+  "comparison": {
+    "mean_R_avg_ratio_goldsf_over_acec": 2.52,
+    "relative_variability_std_over_mean": {"gold_sf": 0.33, "acec": 0.54},
+    "relative_trend_first_to_last_half_pct_increase": {"gold_sf": "+32%", "acec": "+52%"},
+    "wall_clock_diff": "ACEC ~9 min faster overall despite 2 extra models (E5+NLI) — likely explained by ACEC's slightly lower avg_turns (fewer retrieval calls needed), not by ACEC being cheaper per turn"
+  }
+}

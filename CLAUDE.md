@@ -291,6 +291,46 @@ baseline; do not treat its prior findings as guidance for new work.
   — real smoke-run scale is too expensive to redo if that comparison turns
   up something worth fixing first (e.g. reward-scale mismatch affecting
   GRPO's group-relative normalization).
+- **Real-scale (G=8, lora_rank=64) OOM found and fixed; first real-scale
+  gold-SF-vs-ACEC head-to-head run — preliminary, not a conclusion
+  (2026-07-14).** First attempt at the actual G=8/lora_rank=64 spec (not
+  the tiny G=4/rank=16 correctness passes) hit `torch.OutOfMemoryError` on
+  episode 1 for both arms: `grpo_loss_fn` accumulated one autograd graph
+  across a whole episode's ~150+ forward passes before a single
+  `backward()`, which fit at tiny scale but not real scale. Fixed by
+  backprop-ing per turn and accumulating gradients instead (same net
+  gradient, see `grpo_rsf_simple.py`'s `grpo_loss_fn` docstring). Separately
+  found and fixed: `print()` to a piped stdout is block-buffered, so a
+  multi-hour run looked completely hung the whole time it ran — replaced
+  with `logging` (flushes per record). With both fixed, ran 25
+  episodes/arm, 200 distinct questions, sequentially on one GPU: gold-SF
+  mean_R avg 0.419 (std 0.139), ACEC mean_R avg 0.166 (std 0.089) — not
+  directly comparable magnitudes (different reward scales by construction),
+  but ACEC is notably noisier relative to its own mean (0.54 vs 0.33) and
+  its relative improvement first-half-to-second-half is larger (+52% vs
+  +32%) despite the lower floor. avg_turns and wall-clock (2h11m vs 2h02m)
+  are close between arms. **Explicitly not a conclusion** — 25 episodes is
+  far short of even the 100-episode smoke run, single run per arm with no
+  noise characterization, and no EM/judge eval was run against the
+  resulting checkpoints (training-reward-log data only). Full writeup:
+  `experiments/2026-07-14_grpo_rsf_vllm_goldsf_vs_acec_25ep_real_scale/`.
+  Also while diagnosing this run's slowness (real retrieval, serial,
+  ~0.3-0.5 req/s): found `retrive_server.py` runs FAISS on CPU
+  (`faiss_gpu: False`) and its `/search` endpoint already natively batches
+  (`dense_retriever.batch_search`) — our client was sending one query per
+  request instead of batching a whole turn's queries into one call. Fixed
+  (`_retrieve_batch`, commit f51b942) — not yet measured in isolation (both
+  runs above predate this fix). Also prepped (not yet tested, no second GPU
+  available on this box) `GPU_ID`/`FAISS_GPU` knobs on
+  `02_start_retriever.sh` to pin the whole retriever to a dedicated second
+  GPU and turn on GPU-FAISS (commit 050e364) — FlashRAG's
+  `DenseRetriever.load_index()` already calls
+  `faiss.index_cpu_to_all_gpus()`, so this is a config flip, not new code,
+  once a second card is available. Next: measure batched-retrieval alone,
+  then GPU-FAISS once the second GPU lands, then decide on batch_size
+  (current 8q x G8 is already ~80% of the measured ~79.5x vLLM concurrency
+  ceiling at `vllm_gpu_mem_frac=0.45`) before re-running this comparison at
+  a scale large enough to actually mean something.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
