@@ -230,6 +230,34 @@ baseline; do not treat its prior findings as guidance for new work.
   (LoRA r=64, G=8, 100 episodes, 5k prompts — already `20c_train_grpo_rsf_vllm.sh`'s
   defaults, no env overrides needed) and get a real wall-clock number
   against the ~30h serial estimate this script was built to beat.
+- **`--use_acec` added to `grpo_rsf_vllm.py` (2026-07-13), NOT run** — the
+  actual test of ACEC's belief mechanism, not just dense-reward plumbing.
+  Argued through directly with the user rather than defaulting to design
+  doc Section 8 risk #1's literal "run (b) first" advice: that advice's own
+  premise (de-risk the GRPO plumbing cheaply before investing in belief)
+  is now satisfied — turn-level advantages, vLLM+LoRA hot-swap, and real
+  retrieval are all already validated above. Running ablation (b) again at
+  smoke-run scale right now would mostly re-confirm what's already
+  confirmed, not answer whether belief adds anything. When set, each
+  rollout gets its own `ACECBeliefState`, constructed identically to
+  `inference_new.py`'s already-validated `--use_acec` wiring; retrieval-turn
+  reward becomes `belief.reward()` (potential-shaped coverage delta) instead
+  of the gold-SF marginal, using the raw retrieved-doc dicts (no gold labels
+  touch this path, per the design's own principle). Real added cost per
+  turn: an NLI cross-encoder forward pass over every retrieved doc, plus two
+  more models resident on the same GPU (E5Embedder, NLI cross-encoder) on
+  top of the already-loaded vLLM engine + HF+PEFT model. **Open question,
+  not yet resolved**: the Week-1 calibration artifact
+  (`15_build_acec_calibration.sh`'s `observation_model.json`) was not found
+  under `$HOME/logs/acec_calibration_pilot/` on this persistent volume
+  (checked 2026-07-09, directory was empty) despite this doc recording a
+  passing Week-1 gate on 2026-07-07 — that calibration may have run
+  somewhere never copied to this volume. Locate it or re-run
+  `14_run_acec_distractor_pilot.sh` → `15_build_acec_calibration.sh` before
+  trusting `--acec_observation_model`; running without it falls back to
+  uncalibrated `ACECConfig()` defaults (real regression, not equivalent).
+  Do a tiny correctness pass (`USE_ACEC=1 MAX_SAMPLES=20 NUM_EPISODES=3`)
+  before the full smoke-run scale, same discipline as every arm so far.
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
