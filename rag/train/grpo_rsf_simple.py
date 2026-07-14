@@ -23,7 +23,7 @@ GRPO  : turn-level advantages (design doc Section 3.2), not one scalar per
         trajectory — see turn_level_returns/turn_level_advantages below.
 """
 
-import argparse, json, math, os, re, requests, string
+import argparse, json, logging, math, os, re, requests, string
 from typing import List, Set, Tuple
 
 import torch
@@ -31,6 +31,14 @@ import torch.nn.functional as F
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# print() to a pipe (`python ... | tee log`) is block-buffered by default —
+# lines sit in Python's internal buffer and don't reach the log file until it
+# fills or the process exits, making a live run look hung for its whole
+# duration. logging.StreamHandler flushes after every record regardless of
+# the underlying stream's buffering, so every log call below uses it instead.
+logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+log = logging.getLogger("grpo_rsf")
 
 # ── Env / config ───────────────────────────────────────────────────────────────
 RETRIEVE_URL = os.environ.get("RETRIEVE_URL", "")
@@ -56,7 +64,7 @@ def _retrieve(query: str) -> List[dict]:
                 data = r.json()
                 return data[0][:RETRIEVE_K] if data and isinstance(data[0], list) else data[:RETRIEVE_K]
         except Exception as e:
-            print(f"[retrieve] {e}")
+            log.warning(f"[retrieve] {e}")
     return []
 
 
@@ -303,7 +311,7 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
 # ── Training loop ──────────────────────────────────────────────────────────────
 
 def train(args):
-    print(f"[GRPO-RSF] Loading model: {args.model_path}")
+    log.info(f"[GRPO-RSF] Loading model: {args.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
@@ -334,7 +342,7 @@ def train(args):
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
     data = list(ds)
-    print(f"[GRPO-RSF] Training on {len(data)} samples")
+    log.info(f"[GRPO-RSF] Training on {len(data)} samples")
 
     os.makedirs(args.save_path, exist_ok=True)
     global_step = 0
@@ -380,19 +388,19 @@ def train(args):
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
-        print(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
-              f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
+        log.info(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
+                 f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
 
         if global_step % args.save_steps == 0:
             ckpt = os.path.join(args.save_path, f"step_{global_step}")
             model.save_pretrained(ckpt)
             tokenizer.save_pretrained(ckpt)
-            print(f"[GRPO-RSF] Saved checkpoint → {ckpt}")
+            log.info(f"[GRPO-RSF] Saved checkpoint → {ckpt}")
 
     # Final save
     model.save_pretrained(args.save_path)
     tokenizer.save_pretrained(args.save_path)
-    print(f"[GRPO-RSF] Training done. Final model → {args.save_path}")
+    log.info(f"[GRPO-RSF] Training done. Final model → {args.save_path}")
 
 
 if __name__ == "__main__":

@@ -78,7 +78,7 @@ ACECConfig() defaults with a printed warning, which is a real regression
 from the calibrated Week-1 numbers, not a silent equivalent.
 """
 
-import argparse, os, shutil
+import argparse, logging, os, shutil
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -93,6 +93,12 @@ from grpo_rsf_simple import (
     _retrieve, apply_chat_template, exact_match, grpo_loss_fn, parse_step,
     rsf_marginal,
 )
+
+# Same rationale as grpo_rsf_simple.py's identical block: print() to a piped
+# stdout is block-buffered and won't reach the log file until the process
+# exits, making a multi-hour run look hung the whole time it runs.
+logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+log = logging.getLogger("grpo_rsf_vllm")
 
 BeliefFactory = Callable[[str], Any]   # str (question) -> ACECBeliefState
 
@@ -113,22 +119,22 @@ def make_belief_factory(args) -> BeliefFactory:
     from belief.acec import ACECBeliefState, ACECConfig, CrossEncoderNLIScorer, E5QueryEmbedder
     from belief.acec.offline_fit import hit_rates_to_beta_priors, load_calibrated_observation_model
 
-    print(f"[GRPO-RSF-vLLM] [ACEC] Loading E5Embedder for action labeler: {args.e5_model_path}")
+    log.info(f"[GRPO-RSF-vLLM] [ACEC] Loading E5Embedder for action labeler: {args.e5_model_path}")
     acec_embedder = E5QueryEmbedder(E5Embedder(args.e5_model_path))
 
-    print(f"[GRPO-RSF-vLLM] [ACEC] Loading NLI cross-encoder: {args.acec_nli_model}")
+    log.info(f"[GRPO-RSF-vLLM] [ACEC] Loading NLI cross-encoder: {args.acec_nli_model}")
     acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
 
     acec_config = ACECConfig()
     if args.acec_observation_model:
         obs_model, hit_rates = load_calibrated_observation_model(args.acec_observation_model)
         acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
-        print(f"[GRPO-RSF-vLLM] [ACEC] Loaded calibrated observation model from {args.acec_observation_model}")
+        log.info(f"[GRPO-RSF-vLLM] [ACEC] Loaded calibrated observation model from {args.acec_observation_model}")
     else:
         obs_model = None
-        print("[GRPO-RSF-vLLM] [ACEC] WARNING: no --acec_observation_model given — "
-              "using UNCALIBRATED ACECConfig() defaults (not the Week-1 gate's fitted "
-              "tau_new/hit-rate priors). This is a real regression, not a safe fallback.")
+        log.warning("[GRPO-RSF-vLLM] [ACEC] WARNING: no --acec_observation_model given — "
+                    "using UNCALIBRATED ACECConfig() defaults (not the Week-1 gate's fitted "
+                    "tau_new/hit-rate priors). This is a real regression, not a safe fallback.")
     if args.acec_tau_new is not None:
         acec_config.tau_new = args.acec_tau_new
 
@@ -289,7 +295,7 @@ def train(args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[GRPO-RSF-vLLM] Loading vLLM engine (generation only): {args.model_path}")
+    log.info(f"[GRPO-RSF-vLLM] Loading vLLM engine (generation only): {args.model_path}")
     llm = LLM(
         model=args.model_path,
         enable_lora=True,
@@ -300,7 +306,7 @@ def train(args):
         dtype="bfloat16",
     )
 
-    print(f"[GRPO-RSF-vLLM] Loading HF+PEFT model (gradient step only): {args.model_path}")
+    log.info(f"[GRPO-RSF-vLLM] Loading HF+PEFT model (gradient step only): {args.model_path}")
     base = AutoModelForCausalLM.from_pretrained(
         args.model_path, torch_dtype=torch.bfloat16,
         device_map="cuda", trust_remote_code=True,
@@ -326,7 +332,7 @@ def train(args):
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
     data = list(ds)
-    print(f"[GRPO-RSF-vLLM] Training on {len(data)} samples")
+    log.info(f"[GRPO-RSF-vLLM] Training on {len(data)} samples")
 
     os.makedirs(args.save_path, exist_ok=True)
     lora_scratch_dir = os.path.join(args.save_path, "_lora_scratch")
@@ -374,8 +380,8 @@ def train(args):
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
-        print(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
-              f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
+        log.info(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
+                 f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
 
         # Hot-swap: save the just-updated adapter under a fresh id/path (not
         # load_inplace on a reused path — untested live, prefer the
@@ -391,12 +397,12 @@ def train(args):
             ckpt = os.path.join(args.save_path, f"step_{global_step}")
             model.save_pretrained(ckpt)
             tokenizer.save_pretrained(ckpt)
-            print(f"[GRPO-RSF-vLLM] Saved checkpoint → {ckpt}")
+            log.info(f"[GRPO-RSF-vLLM] Saved checkpoint → {ckpt}")
 
     model.save_pretrained(args.save_path)
     tokenizer.save_pretrained(args.save_path)
     shutil.rmtree(lora_scratch_dir, ignore_errors=True)
-    print(f"[GRPO-RSF-vLLM] Training done. Final model → {args.save_path}")
+    log.info(f"[GRPO-RSF-vLLM] Training done. Final model → {args.save_path}")
 
 
 if __name__ == "__main__":
