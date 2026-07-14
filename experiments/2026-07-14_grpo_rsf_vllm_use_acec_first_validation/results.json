@@ -1,0 +1,29 @@
+{
+  "run_name": "grpo_rsf_vllm_20260714_101531",
+  "script": "rag/train/grpo_rsf_vllm.py",
+  "wrapper": "run_scripts/20c_train_grpo_rsf_vllm.sh",
+  "git_commit": "d8c1852",
+  "note": "first live run of --use_acec (belief-shaped R_cov reward instead of gold-SF marginal); real calibration artifact (regenerated same day, GATE PASS: held-out per-slot hit AUC 0.875, K-accuracy 1.000)",
+  "config": {
+    "model_path": "R3-RAG-Qwen",
+    "max_samples": 20,
+    "num_episodes": 3,
+    "n_samples_per_prompt": 4,
+    "batch_size": 8,
+    "lora_rank": 16,
+    "vllm_gpu_mem_frac": 0.45,
+    "use_acec": true,
+    "acec_observation_model": "/root/logs/acec_calibration_pilot/observation_model.json",
+    "acec_nli_model": "cross-encoder/nli-deberta-v3-base",
+    "e5_model_path": "e5-base-v2",
+    "retriever": "real (wiki18_100w full index, e5-base-v2, Flat/exact search)"
+  },
+  "episodes": [
+    {"episode": 1, "loss": -0.0092, "mean_R": 0.057, "avg_turns": 2.59, "batch": "8q x 4samples"},
+    {"episode": 2, "loss": 0.0010, "mean_R": 0.010, "avg_turns": 2.91, "batch": "8q x 4samples"},
+    {"episode": 3, "loss": 0.0020, "mean_R": 0.390, "avg_turns": 2.44, "batch": "4q x 4samples"}
+  ],
+  "connection_errors_this_run": 0,
+  "gpu_mem_used_mib_all_four_models_loaded": 55258,
+  "gpu_mem_total_mib": 81559
+}

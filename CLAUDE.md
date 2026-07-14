@@ -258,6 +258,39 @@ baseline; do not treat its prior findings as guidance for new work.
   uncalibrated `ACECConfig()` defaults (real regression, not equivalent).
   Do a tiny correctness pass (`USE_ACEC=1 MAX_SAMPLES=20 NUM_EPISODES=3`)
   before the full smoke-run scale, same discipline as every arm so far.
+- **`--use_acec` tiny correctness pass: PASSED (2026-07-14).** The Week-1
+  calibration artifact flagged above as missing was, in fact, genuinely
+  gone from this persistent volume (confirmed via `find`: both
+  `observation_model.json` and its source `records.jsonl` absent).
+  Regenerated from scratch: `14_run_acec_distractor_pilot.sh` (500
+  samples) → `15_build_acec_calibration.sh` — **GATE PASS**, held-out
+  per-slot hit AUC 0.875, K-accuracy 1.000. Also found and fixed:
+  `CrossEncoder(model_name)` does a network round-trip to HF Hub on every
+  construction even when the model is fully cached locally —
+  `HF_HUB_OFFLINE=1` (with `HF_HOME` pointed at the real persistent cache,
+  not the ephemeral default) skips it outright, wired into
+  `20c_train_grpo_rsf_vllm.sh`'s `USE_ACEC=1` branch alongside the
+  hf-mirror `HF_ENDPOINT` fallback. With both fixed, ran
+  `USE_ACEC=1 MAX_SAMPLES=20 NUM_EPISODES=3 N_SAMPLES=4 LORA_RANK=16`: all
+  three episodes completed with no crash — `mean_R` 0.057/0.010/0.390,
+  `avg_turns` 2.59/2.91/2.44 (same range as the gold-SF run's 2.38–2.88),
+  55.3/80 GiB GPU memory with all four models resident (vLLM engine,
+  HF+PEFT training model, E5Embedder, NLI cross-encoder). Confirms the full
+  belief-reward path (embedder → NLI scorer → calibrated observation model
+  → `TurnResult` → potential-shaped reward → turn-level GRPO advantage) is
+  live end-to-end without degenerate reward. Same caveat as always: 3 steps
+  on 20 repeated questions is a correctness check, not evidence either way
+  on whether belief-shaped reward beats gold-SF — `mean_R` here is smaller
+  and non-monotonic vs. gold-SF's monotonically-increasing 0.161→0.345→
+  0.615 on the same pool, but the two are different reward scales
+  measuring different things, so this isn't read as a regression. Full
+  writeup: `experiments/2026-07-14_grpo_rsf_vllm_use_acec_first_validation/`.
+  Next: before committing to the full design-doc smoke-run scale (LoRA
+  r=64, G=8, 100 episodes, 5k prompts) for `--use_acec`, run gold-SF and
+  ACEC head-to-head at an intermediate scale (a few hundred steps/prompts)
+  — real smoke-run scale is too expensive to redo if that comparison turns
+  up something worth fixing first (e.g. reward-scale mismatch affecting
+  GRPO's group-relative normalization).
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
