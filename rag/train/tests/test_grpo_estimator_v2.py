@@ -7,6 +7,8 @@ from grpo_estimator_v2 import (
     RewardConfig,
     clipped_grpo_token_loss,
     completion_token_logprobs,
+    engine_hf_logprob_mae,
+    snapshot_old_policy_logprobs,
 )
 
 
@@ -71,10 +73,43 @@ class GrpoEstimatorV2Test(unittest.TestCase):
         logits[0, 1, 2] = 4.0  # predicts first output token
         logits[0, 2, 1] = 3.0  # predicts second output token
         output_ids = torch.tensor([2, 1])
-        actual = completion_token_logprobs(logits, output_ids, temperature=1.0)
+        actual = completion_token_logprobs(logits, output_ids)
         expected0 = torch.log_softmax(logits[0, 1], dim=-1)[2]
         expected1 = torch.log_softmax(logits[0, 2], dim=-1)[1]
         self.assertTrue(torch.allclose(actual, torch.stack([expected0, expected1]).float()))
+
+    def test_raw_policy_logprobs_do_not_apply_sampling_temperature(self):
+        logits = torch.tensor([[[0.0, 0.0], [1.0, -1.0], [0.0, 0.0]]])
+        output_ids = torch.tensor([0])
+        actual = completion_token_logprobs(logits, output_ids)
+        raw = torch.log_softmax(logits[0, 1].float(), dim=-1)[0]
+        tempered = torch.log_softmax(logits[0, 1].float() / 0.7, dim=-1)[0]
+        self.assertTrue(torch.allclose(actual, raw.reshape(1)))
+        self.assertFalse(torch.allclose(actual, tempered.reshape(1)))
+
+    def test_engine_logprobs_are_diagnostic_not_pi_old(self):
+        policy = torch.tensor([-0.3, -1.1], requires_grad=True)
+        engine = torch.tensor([-0.8, -1.7])
+        self.assertGreater(float(engine_hf_logprob_mae(policy, engine)), 0.0)
+
+        old = snapshot_old_policy_logprobs(policy)
+        self.assertFalse(old.requires_grad)
+        loss, stats = clipped_grpo_token_loss(
+            policy,
+            old,
+            policy.detach().clone(),
+            torch.tensor(1.0),
+            kl_coef=0.0,
+        )
+        self.assertAlmostEqual(float(stats["ratio_mean"]), 1.0, places=7)
+        loss.backward()
+        self.assertIsNotNone(policy.grad)
+
+    def test_engine_alignment_rejects_nonfinite_logprobs(self):
+        policy = torch.tensor([-0.3, -1.1])
+        engine = torch.tensor([-0.8, float("nan")])
+        with self.assertRaisesRegex(ValueError, "engine logprobs contain"):
+            engine_hf_logprob_mae(policy, engine)
 
     def test_reward_config_is_identical_across_coverage_sources(self):
         config = RewardConfig(coverage=0.3, retrieval_cost=0.05)

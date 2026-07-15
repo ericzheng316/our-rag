@@ -103,7 +103,7 @@ for fraction in "${fractions[@]}"; do
         --n_samples "$N_SAMPLES"
         --lora_rank "$LORA_RANK"
         --rollout_temperature "$ROLLOUT_TEMPERATURE"
-        --max_old_logprob_mae 0.25
+        --max_engine_logprob_mae 0.05
         --vllm_gpu_mem_frac "$fraction"
         --save_steps 999999
         --lambda_ans 1.0

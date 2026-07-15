@@ -35,6 +35,8 @@ from grpo_estimator_v2 import (
     RewardConfig,
     clipped_grpo_token_loss,
     completion_token_logprobs,
+    engine_hf_logprob_mae,
+    snapshot_old_policy_logprobs,
 )
 
 # print() to a pipe (`python ... | tee log`) is block-buffered by default —
@@ -214,13 +216,13 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
             temperature: float = 0.7,
             reward_config: RewardConfig = RewardConfig()) -> List[Tuple]:
     """
-    Returns (input_ids, output_ids, step_reward, old_logprobs, temperature)
+    Returns (input_ids, output_ids, step_reward, engine_logprobs, temperature)
     for each turn.
       input_ids: context tokens fed to the model (1D, on GPU)
       output_ids: newly generated tokens (1D, on GPU)
       step_reward: unified coverage progress - retrieval cost, or R_ans
-      old_logprobs: None here; grpo_loss_fn snapshots the unchanged HF policy
-      temperature: behavior-policy temperature used for this rollout
+      engine_logprobs: None here; only vLLM rollouts carry engine diagnostics
+      temperature: rollout sampling temperature (not part of raw policy logprobs)
     """
     turns = []
     context = f"The question: {question}"
@@ -293,8 +295,8 @@ def _unpack_turn(turn: Tuple) -> Tuple[torch.Tensor, torch.Tensor, float, Option
         inp_ids, out_ids, reward = turn
         return inp_ids, out_ids, reward, None, 1.0
     if len(turn) == 5:
-        inp_ids, out_ids, reward, old_logprobs, temperature = turn
-        return inp_ids, out_ids, reward, old_logprobs, float(temperature)
+        inp_ids, out_ids, reward, engine_logprobs, temperature = turn
+        return inp_ids, out_ids, reward, engine_logprobs, float(temperature)
     raise ValueError(f"unexpected turn tuple length: {len(turn)}")
 
 
@@ -303,12 +305,19 @@ def grpo_loss_fn(
     trajs_per_question: List[List[List]],
     kl_coef: float = 0.01,
     clip_eps: float = 0.2,
+    max_engine_logprob_mae: Optional[float] = None,
     return_stats: bool = False,
 ):
     """
     trajs_per_question : list (over questions) of lists (over G samples) of
                          list of (input_ids, output_ids, reward,
-                         old_logprobs, temperature) tuples
+                         engine_logprobs, sampling_temperature) tuples
+
+    With exactly one optimizer step per rollout batch, the optimizer-step
+    policy is also pi_old.  We therefore detach the HF policy log-probs before
+    the step and use that exact snapshot in the ratio.  vLLM's raw log-probs
+    are an engine/LoRA alignment diagnostic only; backend numerical error must
+    never be injected into the policy objective.
 
     Uses a single model: LoRA enabled for policy, disabled for reference.
     This halves VRAM vs loading two separate model copies.
@@ -328,7 +337,8 @@ def grpo_loss_fn(
     total_kl = 0.0
     total_ratio = 0.0
     total_clip_fraction = 0.0
-    total_old_logprob_mae = 0.0
+    total_engine_logprob_mae = 0.0
+    n_engine_aligned = 0
     n = 0
 
     for question_trajs in trajs_per_question:
@@ -338,7 +348,7 @@ def grpo_loss_fn(
 
         for traj, advantages in zip(question_trajs, group_advantages):
             for t, turn in enumerate(traj):
-                inp_ids, out_ids, _, old_token_lp, temperature = _unpack_turn(turn)
+                inp_ids, out_ids, _, engine_token_lp, _temperature = _unpack_turn(turn)
                 if out_ids.numel() == 0:
                     continue
 
@@ -351,21 +361,38 @@ def grpo_loss_fn(
                 # ── policy log-probs (LoRA enabled) ───────────────────────────
                 model.enable_adapter_layers()
                 logits = model(full).logits
-                token_lp = completion_token_logprobs(logits, out_ids, temperature)
+                token_lp = completion_token_logprobs(logits, out_ids)
 
-                # HF serial rollouts use the same, still-unmodified model for
-                # collection and this one optimizer step.  Detaching the
-                # current token log-probs therefore snapshots pi_old exactly.
-                if old_token_lp is None:
-                    old_token_lp = token_lp.detach()
-                else:
-                    old_token_lp = old_token_lp.to(device=token_lp.device, dtype=token_lp.dtype)
+                if engine_token_lp is not None:
+                    engine_token_lp = engine_token_lp.to(
+                        device=token_lp.device, dtype=token_lp.dtype
+                    )
+                    engine_mae = float(engine_hf_logprob_mae(token_lp, engine_token_lp))
+                    if (
+                        max_engine_logprob_mae is not None
+                        and engine_mae > max_engine_logprob_mae
+                    ):
+                        raise RuntimeError(
+                            "vLLM raw log-probs and HF raw policy log-probs are not aligned: "
+                            f"turn_MAE={engine_mae:.4f} > "
+                            f"threshold={max_engine_logprob_mae:.4f}. "
+                            "Check LoRA loading/scaling before training. No optimizer step "
+                            "was applied."
+                        )
+                    total_engine_logprob_mae += engine_mae
+                    n_engine_aligned += 1
+
+                # There is one optimizer step per rollout batch, so this exact
+                # pre-step HF snapshot is pi_old.  Its detached value makes the
+                # first/only GRPO update on-policy with ratio exactly one while
+                # preserving the policy-gradient derivative.
+                old_token_lp = snapshot_old_policy_logprobs(token_lp)
 
                 # ── ref log-probs (LoRA disabled → base model) ────────────────
                 with torch.no_grad():
                     model.disable_adapter_layers()
                     ref_logits = model(full).logits
-                    ref_token_lp = completion_token_logprobs(ref_logits, out_ids, temperature)
+                    ref_token_lp = completion_token_logprobs(ref_logits, out_ids)
                     del ref_logits
                 model.enable_adapter_layers()
 
@@ -382,7 +409,6 @@ def grpo_loss_fn(
                 total_kl += float(turn_stats["kl"])
                 total_ratio += float(turn_stats["ratio_mean"])
                 total_clip_fraction += float(turn_stats["clip_fraction"])
-                total_old_logprob_mae += float(turn_stats["old_logprob_mae"])
                 n += 1
                 # Do not let the previous turn's full sequence-by-vocabulary
                 # logits survive until the next forward.  The graph is already
@@ -399,7 +425,7 @@ def grpo_loss_fn(
         "kl": total_kl / max(n, 1),
         "ratio": total_ratio / max(n, 1),
         "clip_fraction": total_clip_fraction / max(n, 1),
-        "old_logprob_mae": total_old_logprob_mae / max(n, 1),
+        "engine_logprob_mae": total_engine_logprob_mae / max(n_engine_aligned, 1),
     }
     return (loss_value, stats) if return_stats else loss_value
 
@@ -500,7 +526,7 @@ def train(args):
         log.info(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
                  f"avg_turns={avg_turns:.2f} | KL={estimator_stats['kl']:.4f} | "
                  f"ratio={estimator_stats['ratio']:.3f} | clip={estimator_stats['clip_fraction']:.3f} | "
-                 f"old_lp_mae={estimator_stats['old_logprob_mae']:.4f} | "
+                 f"engine_lp_mae={estimator_stats['engine_logprob_mae']:.4f} | "
                  f"batch={len(batch)}q × {args.n_samples}samples")
 
         if global_step % args.save_steps == 0:

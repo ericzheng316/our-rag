@@ -27,9 +27,11 @@ Architecture:
     path each step) for the next episode's rollouts — this is vLLM's
     built-in multi-LoRA serving doing the hot-swap, no engine restart.
   - The actual policy/reference log-probs + backward pass still run on a
-    *separate*, regular HF+PEFT model. vLLM supplies the exact behavior-policy
-    sampled-token log-probs used by the clipped GRPO ratio, but its forward
-    pass is generation-only and never part of the gradient.
+    *separate*, regular HF+PEFT model.  With one optimizer update per rollout
+    batch, pi_old is the detached pre-step HF policy, so its ratio is exactly
+    on-policy. vLLM raw log-probs are retained only as a fail-fast check that
+    its hot-loaded LoRA matches HF; engine numerical differences never enter
+    the gradient objective.
 
 UNTESTED on real hardware as of authoring (the GPU box was off). Known risk
 areas to check on the first real run:
@@ -223,12 +225,14 @@ def make_belief_factory(args) -> BeliefFactory:
 # ── Batched, turn-boundary rollout collection via vLLM ──────────────────────────
 
 def _vllm_sampled_token_logprobs(completion: Any, device: torch.device) -> torch.Tensor:
-    """Extract exact behavior-policy log-probs returned by vLLM.
+    """Extract vLLM raw-model log-probs for engine/HF alignment checks.
 
     SamplingParams(logprobs=1) guarantees the sampled token is present in
-    every per-token dictionary even when it is not the top-1 token.  Failing
-    closed here prevents silently treating a mismatched HF recomputation as
-    pi_old.
+    every per-token dictionary even when it is not the top-1 token.  The LLM
+    is explicitly configured with ``logprobs_mode=raw_logprobs`` so these
+    values are before temperature/top-k/top-p processing, matching the HF
+    policy likelihood.  They diagnose LoRA hot-load alignment; pi_old itself
+    is the detached pre-step HF policy in ``grpo_loss_fn``.
     """
 
     token_ids = list(completion.token_ids)
@@ -264,7 +268,7 @@ def vllm_rollout_batch(
 
     Returns trajs_per_question: list (over questions) of lists (over G
     samples) of lists (over turns) of
-    (input_ids, output_ids, reward, old_logprobs, temperature)
+    (input_ids, output_ids, reward, engine_logprobs, sampling_temperature)
     tuples — exactly grpo_loss_fn's expected shape, and exactly what
     grpo_rsf_simple.py's rollout() returns per-rollout, just collected
     turn-batched across the whole (questions x n_samples) pool instead of
@@ -316,7 +320,9 @@ def vllm_rollout_batch(
             completion = outputs[j].outputs[0]
             input_ids = torch.tensor(outputs[j].prompt_token_ids, dtype=torch.long, device="cuda")
             new_ids = torch.tensor(completion.token_ids, dtype=torch.long, device="cuda")
-            old_logprobs = _vllm_sampled_token_logprobs(completion, device=input_ids.device)
+            engine_logprobs = _vllm_sampled_token_logprobs(
+                completion, device=input_ids.device
+            )
 
             step_text = f"Step {t + 1}:\n{completion.text}"
             d = parse_step(step_text)
@@ -326,7 +332,13 @@ def vllm_rollout_batch(
                 # mode — no belief.turn() call either way, there's no action
                 # to label when the model didn't produce parseable output.
                 s["turns"].append(
-                    (input_ids, new_ids, -reward_config.format_error, old_logprobs, s["temperature"])
+                    (
+                        input_ids,
+                        new_ids,
+                        -reward_config.format_error,
+                        engine_logprobs,
+                        s["temperature"],
+                    )
                 )
                 s["format_error"] = True
                 s["done"] = True
@@ -338,18 +350,26 @@ def vllm_rollout_batch(
                 r_ans = reward_config.answer_reward(correct)
                 if s["belief"] is not None:
                     s["belief"].turn(query=None, new_docs=[], is_answer=True)
-                s["turns"].append((input_ids, new_ids, r_ans, old_logprobs, s["temperature"]))
+                s["turns"].append(
+                    (input_ids, new_ids, r_ans, engine_logprobs, s["temperature"])
+                )
                 s["answered"] = True
                 s["answer_correct"] = correct
                 s["done"] = True
                 continue
 
             if d.get("query"):
-                s["_pending"] = (input_ids, new_ids, old_logprobs, d)
+                s["_pending"] = (input_ids, new_ids, engine_logprobs, d)
                 pending_retrieval.append(i)
             else:
                 s["turns"].append(
-                    (input_ids, new_ids, -reward_config.format_error, old_logprobs, s["temperature"])
+                    (
+                        input_ids,
+                        new_ids,
+                        -reward_config.format_error,
+                        engine_logprobs,
+                        s["temperature"],
+                    )
                 )
                 s["format_error"] = True
                 s["done"] = True
@@ -374,7 +394,7 @@ def vllm_rollout_batch(
 
             for i, docs in zip(pending_retrieval, docs_list):
                 s = state[i]
-                input_ids, new_ids, old_logprobs, d = s.pop("_pending")
+                input_ids, new_ids, engine_logprobs, d = s.pop("_pending")
                 sf_titles = questions[s["qi"]]["sf_titles"]
                 s["retrieval_calls"] += 1
                 if not docs:
@@ -401,7 +421,7 @@ def vllm_rollout_batch(
                     delta_coverage = r_sf
                 r_turn = reward_config.retrieval_reward(delta_coverage)
                 s["turns"].append(
-                    (input_ids, new_ids, r_turn, old_logprobs, s["temperature"])
+                    (input_ids, new_ids, r_turn, engine_logprobs, s["temperature"])
                 )
 
                 step_str = (f"Step {t + 1}:\nThe problem analysis: {d['analysis']}\n"
@@ -457,6 +477,7 @@ def train(args):
         gpu_memory_utilization=args.vllm_gpu_mem_frac,
         max_model_len=4096,
         dtype="bfloat16",
+        logprobs_mode="raw_logprobs",
     )
 
     log.info(f"[GRPO-RSF-vLLM] Loading HF+PEFT model (gradient step only): {args.model_path}")
@@ -540,18 +561,9 @@ def train(args):
             trajs_per_question,
             kl_coef=args.kl_coef,
             clip_eps=args.clip_eps,
+            max_engine_logprob_mae=args.max_engine_logprob_mae,
             return_stats=True,
         )
-        if (
-            args.max_old_logprob_mae is not None
-            and estimator_stats["old_logprob_mae"] > args.max_old_logprob_mae
-        ):
-            raise RuntimeError(
-                "vLLM behavior log-probs and HF policy log-probs are not aligned: "
-                f"MAE={estimator_stats['old_logprob_mae']:.4f} > "
-                f"threshold={args.max_old_logprob_mae:.4f}. Check temperature/logprob "
-                "semantics before training. No optimizer step was applied."
-            )
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         torch.cuda.empty_cache()
@@ -569,7 +581,7 @@ def train(args):
             f"empty={online_metrics['empty_retrieval_rate']:.3f} | "
             f"KL={estimator_stats['kl']:.4f} | ratio={estimator_stats['ratio']:.3f} | "
             f"clip={estimator_stats['clip_fraction']:.3f} | "
-            f"old_lp_mae={estimator_stats['old_logprob_mae']:.4f} | "
+            f"engine_lp_mae={estimator_stats['engine_logprob_mae']:.4f} | "
             f"batch={len(batch)}q × {args.n_samples}samples"
         )
 
@@ -610,9 +622,15 @@ if __name__ == "__main__":
     parser.add_argument("--clip_eps",     type=float, default=0.2)
     parser.add_argument("--rollout_temperature", type=float, default=0.7,
                          help="One shared sampling temperature for every rollout in a GRPO group.")
-    parser.add_argument("--max_old_logprob_mae", type=float, default=None,
-                         help="Optional fail-fast threshold for vLLM-vs-HF sampled-token "
-                              "logprob alignment, checked before optimizer.step().")
+    parser.add_argument(
+        "--max_engine_logprob_mae",
+        "--max_old_logprob_mae",
+        dest="max_engine_logprob_mae",
+        type=float,
+        default=None,
+        help="Optional per-turn fail-fast threshold for vLLM-vs-HF raw-model "
+             "logprob alignment. The old flag name remains as a compatibility alias.",
+    )
     parser.add_argument("--lambda_ans", type=float, default=LAMBDA_ANS)
     parser.add_argument("--lambda_cov", type=float, default=LAMBDA_COV)
     parser.add_argument("--lambda_fmt", type=float, default=LAMBDA_FMT)

@@ -71,7 +71,7 @@ CUDA_VISIBLE_DEVICES="$TRAIN_GPU" RETRIEVE_URL="$RETRIEVE_URL" \
         --lora_rank "$LORA_RANK" \
         --rollout_temperature "$ROLLOUT_TEMPERATURE" \
         --vllm_gpu_mem_frac "$VLLM_FRACTION" \
-        --max_old_logprob_mae 0.25 \
+        --max_engine_logprob_mae 0.05 \
         --save_steps 999999 \
         --lambda_ans 1.0 \
         --lambda_cov 0.3 \

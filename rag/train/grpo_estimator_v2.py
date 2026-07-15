@@ -31,27 +31,57 @@ class RewardConfig:
 def completion_token_logprobs(
     logits: torch.Tensor,
     output_ids: torch.Tensor,
-    temperature: float,
 ) -> torch.Tensor:
-    """Log-probabilities of completion tokens under the tempered policy.
+    """Raw-model log-probabilities of the sampled completion tokens.
 
     ``logits`` has shape ``(1, prompt+completion, vocab)`` and follows the
     causal-LM convention where position ``i`` predicts token ``i+1``.
+
+    Sampling temperature is deliberately absent.  vLLM's default
+    ``logprobs_mode=raw_logprobs`` reports probabilities before temperature
+    and top-k/top-p processors, and the GRPO policy/reference distributions
+    use those same raw model probabilities.  Temperature controls rollout
+    exploration only.
     """
 
-    if temperature <= 0:
-        raise ValueError(f"temperature must be > 0, got {temperature}")
     n_out = int(output_ids.numel())
     if n_out == 0:
         return logits.new_empty((0,), dtype=torch.float32)
-    # Keep the full (sequence, vocab) tensor in the model dtype; promoting it
-    # to fp32 here roughly doubles the dominant activation and can OOM the
-    # real G=8/r=64 configuration.  Only the gathered token log-probs are
-    # promoted below.
-    scaled = logits[0] / temperature
-    log_probs = torch.log_softmax(scaled, dim=-1)
-    predicted = log_probs[-(n_out + 1) : -1]
-    return predicted.gather(1, output_ids.unsqueeze(1)).squeeze(1).float()
+    # Slice completion positions before the fp32 normalization.  vLLM
+    # normalizes raw logits in fp32; matching that precision materially
+    # improves engine/HF alignment without promoting prompt positions or the
+    # entire model output tensor.
+    predicted_logits = logits[0, -(n_out + 1) : -1]
+    predicted_logits_fp32 = predicted_logits.float()
+    token_logits = predicted_logits_fp32.gather(1, output_ids.unsqueeze(1)).squeeze(1)
+    log_normalizer = torch.logsumexp(predicted_logits_fp32, dim=-1)
+    return token_logits - log_normalizer
+
+
+def engine_hf_logprob_mae(
+    policy_logprobs: torch.Tensor,
+    engine_logprobs: torch.Tensor,
+) -> torch.Tensor:
+    """Mean absolute raw-logprob difference used only as an alignment gate."""
+
+    if policy_logprobs.shape != engine_logprobs.shape:
+        raise ValueError(
+            "policy/engine logprob shape mismatch: "
+            f"{policy_logprobs.shape} vs {engine_logprobs.shape}"
+        )
+    if policy_logprobs.numel() == 0:
+        raise ValueError("policy/engine logprobs must contain at least one token")
+    if not torch.isfinite(policy_logprobs).all():
+        raise ValueError("policy logprobs contain NaN or Inf")
+    if not torch.isfinite(engine_logprobs).all():
+        raise ValueError("engine logprobs contain NaN or Inf")
+    return (policy_logprobs.detach() - engine_logprobs.detach()).abs().mean()
+
+
+def snapshot_old_policy_logprobs(policy_logprobs: torch.Tensor) -> torch.Tensor:
+    """Snapshot pi_old for the single optimizer update on a rollout batch."""
+
+    return policy_logprobs.detach()
 
 
 def clipped_grpo_token_loss(
