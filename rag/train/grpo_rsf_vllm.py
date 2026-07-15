@@ -119,7 +119,10 @@ def make_belief_factory(args) -> BeliefFactory:
 
     from belief.obs_extractor import E5Embedder
     from belief.acec import ACECBeliefState, ACECConfig, CrossEncoderNLIScorer, E5QueryEmbedder
-    from belief.acec.calibration_v2 import build_k_predictor, load_calibration_artifact_v2
+    from belief.acec.calibration_v2 import (
+        build_k_predictor as build_k_predictor_v2,
+        load_calibration_artifact_v2,
+    )
     from belief.acec.offline_fit import hit_rates_to_beta_priors, load_calibrated_observation_model
 
     log.info(f"[GRPO-RSF-vLLM] [ACEC] Loading E5Embedder for action labeler: {args.e5_model_path}")
@@ -129,19 +132,49 @@ def make_belief_factory(args) -> BeliefFactory:
     acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
 
     acec_config = ACECConfig()
-    artifact_v2 = None
-    if args.acec_artifact_v2:
-        artifact_v2 = load_calibration_artifact_v2(args.acec_artifact_v2)
-        obs_model = artifact_v2.observation_model
-        hit_rates = artifact_v2.hit_rates
+    if args.acec_artifact_v2 and args.acec_artifact_v3:
+        raise ValueError("supply only one of --acec_artifact_v2 and --acec_artifact_v3")
+
+    artifact = None
+    build_k_predictor = build_k_predictor_v2
+    artifact_path = None
+    artifact_version = None
+    if args.acec_artifact_v3:
+        from belief.acec.calibration_v3 import (
+            build_k_predictor as build_k_predictor_v3,
+            load_calibration_artifact_v3,
+        )
+
+        artifact = load_calibration_artifact_v3(args.acec_artifact_v3)
+        build_k_predictor = build_k_predictor_v3
+        artifact_path = args.acec_artifact_v3
+        artifact_version = 3
+    elif args.acec_artifact_v2:
+        artifact = load_calibration_artifact_v2(args.acec_artifact_v2)
+        artifact_path = args.acec_artifact_v2
+        artifact_version = 2
+
+    if artifact is not None:
+        obs_model = artifact.observation_model
+        hit_rates = artifact.hit_rates
         if args.acec_k_mode == "predictor":
-            artifact_k_max = int(artifact_v2.metadata.get("k_max", acec_config.k_max))
+            artifact_k_max = int(artifact.metadata.get("k_max", acec_config.k_max))
             acec_config.k_max = artifact_k_max
-        artifact_tau_new = artifact_v2.metadata.get("tau_new")
+        artifact_tau_new = artifact.metadata.get("tau_new")
         if artifact_tau_new is not None:
             acec_config.tau_new = float(artifact_tau_new)
         acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
-        log.info(f"[GRPO-RSF-vLLM] [ACEC] Loaded v2 calibration artifact from {args.acec_artifact_v2}")
+        if artifact_version == 3 and args.acec_k_mode == "fixed":
+            calibrated_fixed_k = artifact.metadata.get("fixed_k")
+            if calibrated_fixed_k is not None and int(calibrated_fixed_k) != args.acec_fixed_k:
+                raise ValueError(
+                    f"runtime fixed_k={args.acec_fixed_k} conflicts with "
+                    f"v3 artifact fixed_k={calibrated_fixed_k}"
+                )
+        log.info(
+            f"[GRPO-RSF-vLLM] [ACEC] Loaded v{artifact_version} calibration "
+            f"artifact from {artifact_path}"
+        )
     elif args.acec_observation_model:
         obs_model, hit_rates = load_calibrated_observation_model(args.acec_observation_model)
         acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
@@ -167,7 +200,7 @@ def make_belief_factory(args) -> BeliefFactory:
         k_max=acec_config.k_max,
         embedder=acec_embedder,
         fixed_k=args.acec_fixed_k,
-        artifact=artifact_v2,
+        artifact=artifact,
     )
     log.info(
         f"[GRPO-RSF-vLLM] [ACEC] K mode={args.acec_k_mode} "
@@ -607,10 +640,13 @@ if __name__ == "__main__":
     parser.add_argument("--acec_artifact_v2", type=str, default=None,
                          help="Versioned calibration-v2 artifact. Preferred over the legacy "
                               "--acec_observation_model when supplied.")
+    parser.add_argument("--acec_artifact_v3", type=str, default=None,
+                         help="Strict calibration-v3 artifact with monotonic posteriors. "
+                              "Preferred over v2 for new ACEC runs.")
     parser.add_argument("--acec_k_mode", choices=("fixed", "uniform", "predictor"),
                          default="fixed",
                          help="K posterior source. HotpotQA runs should use fixed with K=2; "
-                              "predictor requires --acec_artifact_v2.")
+                              "predictor requires a versioned artifact with K data.")
     parser.add_argument("--acec_fixed_k", type=int, default=2,
                          help="Fixed K used when --acec_k_mode=fixed.")
     parser.add_argument("--acec_tau_new", type=float, default=None,
