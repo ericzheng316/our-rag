@@ -67,29 +67,29 @@ class _FakeFaiss:
 
 
 class PagedGpuLoaderTests(unittest.TestCase):
-    def test_inner_product_index_uses_view_and_float16_config(self):
+    def test_inner_product_index_defaults_to_fp32_and_uses_view(self):
         vectors = _Vectors(3, 8)
         cpu_index = _IndexFlat(vectors, _FakeFaiss.METRIC_INNER_PRODUCT)
 
         gpu_index, resources = MODULE.cpu_index_to_gpu_paged(
-            cpu_index, _FakeFaiss, device=2, use_float16=True
+            cpu_index, _FakeFaiss, device=2
         )
 
         self.assertIs(gpu_index.resources, resources)
         self.assertEqual(gpu_index.config.device, 2)
-        self.assertTrue(gpu_index.config.useFloat16)
+        self.assertFalse(gpu_index.config.useFloat16)
         self.assertIs(gpu_index.added, vectors)
         self.assertEqual(vectors.reshape_calls, [(-1,), (3, 8)])
 
-    def test_l2_index_uses_l2_gpu_class(self):
+    def test_l2_index_can_explicitly_enable_fp16(self):
         cpu_index = _IndexFlat(_Vectors(2, 4), _FakeFaiss.METRIC_L2)
 
         gpu_index, _ = MODULE.cpu_index_to_gpu_paged(
-            cpu_index, _FakeFaiss, use_float16=False
+            cpu_index, _FakeFaiss, use_float16=True
         )
 
         self.assertIsInstance(gpu_index, _GpuIndex)
-        self.assertFalse(gpu_index.config.useFloat16)
+        self.assertTrue(gpu_index.config.useFloat16)
 
     def test_rejects_non_flat_index(self):
         with self.assertRaisesRegex(TypeError, "IndexFlat"):

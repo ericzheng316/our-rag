@@ -8,12 +8,14 @@ storage, which exceeds an 80 GiB H100 during conversion.
 
 This wrapper leaves the existing server and vendored FlashRAG implementation
 untouched.  It creates an empty GPU flat index and calls its public ``add``
-method instead; FAISS then uses its built-in 256 MiB paging path.
+method instead.  FP32 is the default so retrieval retains the original index
+precision; optional FP16 storage uses FAISS' built-in 256 MiB paging path.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import runpy
 from pathlib import Path
 from typing import Any
@@ -27,7 +29,7 @@ def cpu_index_to_gpu_paged(
     faiss_module: Any,
     *,
     device: int = 0,
-    use_float16: bool = True,
+    use_float16: bool = False,
 ) -> tuple[Any, Any]:
     """Move a CPU ``IndexFlat`` to one GPU through FAISS' paged add path."""
 
@@ -92,14 +94,16 @@ def install_paged_single_gpu_loader() -> None:
                 "dedicated retriever GPU."
             )
 
+        use_float16 = os.environ.get("FAISS_GPU_USE_FLOAT16", "0") == "1"
         log.info(
-            "Loading FAISS IndexFlat through paged FP16 transfer "
+            "Loading FAISS IndexFlat through bounded %s transfer "
             "(vectors=%s, dim=%s, visible_gpu=0)",
+            "FP16" if use_float16 else "FP32",
             cpu_index.ntotal,
             cpu_index.d,
         )
         gpu_index, resources = cpu_index_to_gpu_paged(
-            cpu_index, faiss, device=0, use_float16=True
+            cpu_index, faiss, device=0, use_float16=use_float16
         )
         # Keep the provider alive explicitly for the lifetime of the index.
         self._faiss_gpu_resources = resources

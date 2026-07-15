@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DATA_ROOT="${DATA_ROOT:-/root/data}"
 GPU_ID="${GPU_ID:-1}"
+FAISS_GPU_USE_FLOAT16="${FAISS_GPU_USE_FLOAT16:-0}"
 PORT="${PORT:-8001}"
 HOST="${HOST:-$(hostname -I | awk '{print $1}')}"
 
@@ -34,13 +35,14 @@ mkdir -p "${LOG_DIR}"
 } > "${ENV_FILE}"
 
 echo "[$(date)] Starting paged SM90 GPU retriever: http://${HOST}:${PORT}"
-echo "[$(date)] GPU_ID=${GPU_ID} INDEX=${INDEX}"
+echo "[$(date)] GPU_ID=${GPU_ID} FAISS_GPU_USE_FLOAT16=${FAISS_GPU_USE_FLOAT16} INDEX=${INDEX}"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" \
 PYTHONPATH="${FAISS_GPU_PYTHONPATH}${PYTHONPATH:+:${PYTHONPATH}}" \
 PYTHONUNBUFFERED=1 \
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 \
 FAISS_GPU=1 \
+FAISS_GPU_USE_FLOAT16="${FAISS_GPU_USE_FLOAT16}" \
 "${PYTHON_BIN}" \
     "${PROJECT_ROOT}/rag/benchmark/retriever/src/retrive_server_gpu_paged.py" \
     --host "${HOST}" \
