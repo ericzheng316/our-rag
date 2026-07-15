@@ -27,9 +27,9 @@ Architecture:
     path each step) for the next episode's rollouts — this is vLLM's
     built-in multi-LoRA serving doing the hot-swap, no engine restart.
   - The actual policy/reference log-probs + backward pass still run on a
-    *separate*, regular HF+PEFT model (via the imported grpo_loss_fn,
-    unchanged from grpo_rsf_simple.py) — vLLM's own forward pass is
-    generation-only and never part of the gradient.
+    *separate*, regular HF+PEFT model. vLLM supplies the exact behavior-policy
+    sampled-token log-probs used by the clipped GRPO ratio, but its forward
+    pass is generation-only and never part of the gradient.
 
 UNTESTED on real hardware as of authoring (the GPU box was off). Known risk
 areas to check on the first real run:
@@ -60,9 +60,9 @@ the paper": it might already capture most of the achievable gain, in which
 case belief's marginal value is narrow. Running (b) alone doesn't test
 that risk either way — only running the belief-shaped R_cov arm does. When
 set, each rollout gets its own ACECBeliefState (no gold labels used at
-rollout time, per the design's own principle); reward per retrieval turn
-becomes potential_shaped_reward(coverage_before, coverage_after) instead of
-the gold supporting-facts marginal. Needs three more things loaded onto the
+rollout time, per the design's own principle). Both arms use the same reward
+scale and retrieval cost; only the coverage-delta source changes from gold
+supporting facts to ACEC's posterior coverage. Needs three more things loaded onto the
 same GPU (E5Embedder for the action labeler, the NLI cross-encoder, and
 optionally the Week-1 calibrated observation model) — real added GPU memory
 and per-turn latency (an extra NLI forward pass per retrieved doc) on top
@@ -88,8 +88,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
+from grpo_estimator_v2 import RewardConfig
+
 from grpo_rsf_simple import (
-    LAMBDA_ANS, LAMBDA_FMT, LAMBDA_SF, MAX_DOCS, STOP_TOKEN,
+    LAMBDA_ANS, LAMBDA_COV, LAMBDA_FMT, MAX_DOCS, RETRIEVAL_COST, STOP_TOKEN,
     _retrieve_batch, apply_chat_template, exact_match, grpo_loss_fn, parse_step,
     rsf_marginal,
 )
@@ -117,6 +119,7 @@ def make_belief_factory(args) -> BeliefFactory:
 
     from belief.obs_extractor import E5Embedder
     from belief.acec import ACECBeliefState, ACECConfig, CrossEncoderNLIScorer, E5QueryEmbedder
+    from belief.acec.calibration_v2 import build_k_predictor, load_calibration_artifact_v2
     from belief.acec.offline_fit import hit_rates_to_beta_priors, load_calibrated_observation_model
 
     log.info(f"[GRPO-RSF-vLLM] [ACEC] Loading E5Embedder for action labeler: {args.e5_model_path}")
@@ -126,26 +129,90 @@ def make_belief_factory(args) -> BeliefFactory:
     acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
 
     acec_config = ACECConfig()
-    if args.acec_observation_model:
+    artifact_v2 = None
+    if args.acec_artifact_v2:
+        artifact_v2 = load_calibration_artifact_v2(args.acec_artifact_v2)
+        obs_model = artifact_v2.observation_model
+        hit_rates = artifact_v2.hit_rates
+        if args.acec_k_mode == "predictor":
+            artifact_k_max = int(artifact_v2.metadata.get("k_max", acec_config.k_max))
+            acec_config.k_max = artifact_k_max
+        artifact_tau_new = artifact_v2.metadata.get("tau_new")
+        if artifact_tau_new is not None:
+            acec_config.tau_new = float(artifact_tau_new)
+        acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
+        log.info(f"[GRPO-RSF-vLLM] [ACEC] Loaded v2 calibration artifact from {args.acec_artifact_v2}")
+    elif args.acec_observation_model:
         obs_model, hit_rates = load_calibrated_observation_model(args.acec_observation_model)
         acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
         log.info(f"[GRPO-RSF-vLLM] [ACEC] Loaded calibrated observation model from {args.acec_observation_model}")
     else:
         obs_model = None
-        log.warning("[GRPO-RSF-vLLM] [ACEC] WARNING: no --acec_observation_model given — "
+        log.warning("[GRPO-RSF-vLLM] [ACEC] WARNING: no calibration artifact given — "
                     "using UNCALIBRATED ACECConfig() defaults (not the Week-1 gate's fitted "
                     "tau_new/hit-rate priors). This is a real regression, not a safe fallback.")
     if args.acec_tau_new is not None:
         acec_config.tau_new = args.acec_tau_new
 
+    # A fixed-K mode is a structural statement, not just an initialization.
+    # Keeping k_max=4 with a one-hot K=2 prior lets a spurious third DECOMPOSE
+    # truncate away all mass and KPosterior's safety fallback then jumps to K=4.
+    # Setting the runtime support to {1, ..., fixed_k} keeps HotpotQA's known
+    # K=2 invariant even if the labeler proposes an extra slot.
+    if args.acec_k_mode == "fixed":
+        acec_config.k_max = args.acec_fixed_k
+
+    k_predictor = build_k_predictor(
+        mode=args.acec_k_mode,
+        k_max=acec_config.k_max,
+        embedder=acec_embedder,
+        fixed_k=args.acec_fixed_k,
+        artifact=artifact_v2,
+    )
+    log.info(
+        f"[GRPO-RSF-vLLM] [ACEC] K mode={args.acec_k_mode} "
+        f"fixed_k={args.acec_fixed_k if args.acec_k_mode == 'fixed' else 'n/a'}"
+    )
+
     def factory(question: str):
-        belief = ACECBeliefState(acec_embedder, acec_nli_scorer, config=acec_config, obs_model=obs_model)
+        belief = ACECBeliefState(
+            acec_embedder,
+            acec_nli_scorer,
+            config=acec_config,
+            obs_model=obs_model,
+            k_predictor=k_predictor,
+        )
         belief.reset(question)
         return belief
 
     return factory
 
 # ── Batched, turn-boundary rollout collection via vLLM ──────────────────────────
+
+def _vllm_sampled_token_logprobs(completion: Any, device: torch.device) -> torch.Tensor:
+    """Extract exact behavior-policy log-probs returned by vLLM.
+
+    SamplingParams(logprobs=1) guarantees the sampled token is present in
+    every per-token dictionary even when it is not the top-1 token.  Failing
+    closed here prevents silently treating a mismatched HF recomputation as
+    pi_old.
+    """
+
+    token_ids = list(completion.token_ids)
+    per_token = completion.logprobs
+    if per_token is None or len(per_token) != len(token_ids):
+        raise RuntimeError(
+            "vLLM did not return one logprob entry per sampled token; "
+            "verify SamplingParams(logprobs=1) against the installed vLLM version"
+        )
+    values = []
+    for token_id, candidates in zip(token_ids, per_token):
+        entry = candidates.get(token_id) if candidates is not None else None
+        if entry is None:
+            raise RuntimeError(f"sampled token {token_id} missing from vLLM logprobs")
+        values.append(float(getattr(entry, "logprob", entry)))
+    return torch.tensor(values, dtype=torch.float32, device=device)
+
 
 def vllm_rollout_batch(
     llm: LLM,
@@ -154,23 +221,25 @@ def vllm_rollout_batch(
     n_samples: int,
     n_turns: int = 5,
     belief_factory: Optional[BeliefFactory] = None,
-) -> List[List[List[Tuple[torch.Tensor, torch.Tensor, float]]]]:
+    rollout_temperature: float = 0.7,
+    reward_config: RewardConfig = RewardConfig(),
+    collect_metrics: bool = False,
+) -> Any:
     """
     questions: list of {"question": str, "sf_titles": List[str],
                          "golden_answers": List[str]}
 
     Returns trajs_per_question: list (over questions) of lists (over G
-    samples) of lists (over turns) of (input_ids, output_ids, reward)
+    samples) of lists (over turns) of
+    (input_ids, output_ids, reward, old_logprobs, temperature)
     tuples — exactly grpo_loss_fn's expected shape, and exactly what
     grpo_rsf_simple.py's rollout() returns per-rollout, just collected
     turn-batched across the whole (questions x n_samples) pool instead of
     one rollout at a time.
 
-    belief_factory: when given, per-turn reward for retrieval steps comes
-    from ACECBeliefState.reward() (potential-shaped coverage delta) instead
-    of the gold supporting-facts marginal — see module docstring's
-    --use_acec section. Each rollout gets its own independent belief state
-    (same lifetime as its context/retrieved_ids).
+    belief_factory: when given, the shared RewardConfig is applied to ACEC's
+    delta coverage instead of the gold supporting-facts marginal.  All other
+    reward components remain identical across arms.
     """
     n_q = len(questions)
     state = []
@@ -182,9 +251,17 @@ def vllm_rollout_batch(
                 "retrieved_ids": [],
                 "found_sf": set(),
                 "belief": belief_factory(item["question"]) if belief_factory else None,
-                "temperature": 0.3 + g * 0.2,   # same diversity schedule as grpo_rsf_simple.py
+                # All G samples must come from the same behavior distribution.
+                # Independent sampling still supplies diversity; changing
+                # temperature inside a group makes the GRPO ratio off-policy.
+                "temperature": rollout_temperature,
                 "turns": [],
                 "done": False,
+                "answered": False,
+                "answer_correct": False,
+                "format_error": False,
+                "retrieval_calls": 0,
+                "empty_retrievals": 0,
             })
 
     for t in range(n_turns):
@@ -195,7 +272,7 @@ def vllm_rollout_batch(
         prompts = [apply_chat_template(state[i]["context"]) for i in active]
         sampling_params = [
             SamplingParams(temperature=state[i]["temperature"], max_tokens=512,
-                            stop_token_ids=[STOP_TOKEN])
+                            stop_token_ids=[STOP_TOKEN], logprobs=1)
             for i in active
         ]
         outputs = llm.generate(prompts, sampling_params, lora_request=lora_request, use_tqdm=False)
@@ -206,6 +283,7 @@ def vllm_rollout_batch(
             completion = outputs[j].outputs[0]
             input_ids = torch.tensor(outputs[j].prompt_token_ids, dtype=torch.long, device="cuda")
             new_ids = torch.tensor(completion.token_ids, dtype=torch.long, device="cuda")
+            old_logprobs = _vllm_sampled_token_logprobs(completion, device=input_ids.device)
 
             step_text = f"Step {t + 1}:\n{completion.text}"
             d = parse_step(step_text)
@@ -214,25 +292,33 @@ def vllm_rollout_batch(
                 # Format error is a code-level penalty, orthogonal to reward
                 # mode — no belief.turn() call either way, there's no action
                 # to label when the model didn't produce parseable output.
-                s["turns"].append((input_ids, new_ids, -LAMBDA_FMT))
+                s["turns"].append(
+                    (input_ids, new_ids, -reward_config.format_error, old_logprobs, s["temperature"])
+                )
+                s["format_error"] = True
                 s["done"] = True
                 continue
 
             if d.get("answer"):
                 golds = questions[s["qi"]]["golden_answers"]
-                r_ans = LAMBDA_ANS if exact_match(d["answer"], golds) else 0.0
+                correct = exact_match(d["answer"], golds)
+                r_ans = reward_config.answer_reward(correct)
                 if s["belief"] is not None:
-                    result = s["belief"].turn(query=None, new_docs=[], is_answer=True)
-                    r_ans = s["belief"].reward(result, answer_reward=r_ans)
-                s["turns"].append((input_ids, new_ids, r_ans))
+                    s["belief"].turn(query=None, new_docs=[], is_answer=True)
+                s["turns"].append((input_ids, new_ids, r_ans, old_logprobs, s["temperature"]))
+                s["answered"] = True
+                s["answer_correct"] = correct
                 s["done"] = True
                 continue
 
             if d.get("query"):
-                s["_pending"] = (input_ids, new_ids, d)
+                s["_pending"] = (input_ids, new_ids, old_logprobs, d)
                 pending_retrieval.append(i)
             else:
-                s["turns"].append((input_ids, new_ids, -LAMBDA_FMT))
+                s["turns"].append(
+                    (input_ids, new_ids, -reward_config.format_error, old_logprobs, s["temperature"])
+                )
+                s["format_error"] = True
                 s["done"] = True
 
         # One batched request for the whole turn's queries, not N serial
@@ -250,13 +336,16 @@ def vllm_rollout_batch(
         # retrive_server.py's faiss_gpu=False — not GPU-bound, so more
         # training-side GPUs would not have helped this).
         if pending_retrieval:
-            queries = [state[i]["_pending"][2]["query"] for i in pending_retrieval]
+            queries = [state[i]["_pending"][3]["query"] for i in pending_retrieval]
             docs_list = _retrieve_batch(queries)
 
             for i, docs in zip(pending_retrieval, docs_list):
                 s = state[i]
-                input_ids, new_ids, d = s.pop("_pending")
+                input_ids, new_ids, old_logprobs, d = s.pop("_pending")
                 sf_titles = questions[s["qi"]]["sf_titles"]
+                s["retrieval_calls"] += 1
+                if not docs:
+                    s["empty_retrievals"] += 1
 
                 new_doc_dicts = []
                 for doc in docs:
@@ -265,17 +354,22 @@ def vllm_rollout_batch(
                         new_doc_dicts.append(doc)
                 doc_text = "\n".join(doc.get("contents", "") for doc in new_doc_dicts)
 
+                # Gold coverage is always computed for cheap online metrics;
+                # only the selected arm's delta enters the reward.
+                r_sf, s["found_sf"] = rsf_marginal(doc_text, sf_titles, s["found_sf"])
                 if s["belief"] is not None:
                     # No gold labels here by design (ACECBeliefState's own
                     # principle) — new_doc_dicts (raw {"contents": ...}
                     # dicts, not the concatenated doc_text string) go straight
                     # to the NLI-scored coverage update.
                     result = s["belief"].turn(query=d["query"], new_docs=new_doc_dicts)
-                    r_turn = s["belief"].reward(result)
+                    delta_coverage = result.delta_coverage
                 else:
-                    r_sf, s["found_sf"] = rsf_marginal(doc_text, sf_titles, s["found_sf"])
-                    r_turn = LAMBDA_SF * r_sf
-                s["turns"].append((input_ids, new_ids, r_turn))
+                    delta_coverage = r_sf
+                r_turn = reward_config.retrieval_reward(delta_coverage)
+                s["turns"].append(
+                    (input_ids, new_ids, r_turn, old_logprobs, s["temperature"])
+                )
 
                 step_str = (f"Step {t + 1}:\nThe problem analysis: {d['analysis']}\n"
                             f"The retrieval query: {d['query']}\n"
@@ -284,13 +378,34 @@ def vllm_rollout_batch(
 
                 if t == n_turns - 1:
                     last = s["turns"][-1]
-                    s["turns"][-1] = (last[0], last[1], last[2] - LAMBDA_FMT)
+                    s["turns"][-1] = (
+                        last[0], last[1], last[2] - reward_config.format_error, last[3], last[4]
+                    )
                     s["done"] = True
 
     trajs_per_question: List[List[List]] = [[] for _ in range(n_q)]
     for s in state:
         trajs_per_question[s["qi"]].append(s["turns"])
-    return trajs_per_question
+    if not collect_metrics:
+        return trajs_per_question
+
+    rollout_count = max(len(state), 1)
+    total_retrievals = sum(s["retrieval_calls"] for s in state)
+    sf_recalls = []
+    for s in state:
+        sf_titles = set(questions[s["qi"]]["sf_titles"])
+        sf_recalls.append(len(s["found_sf"]) / len(sf_titles) if sf_titles else 0.0)
+    metrics = {
+        "answer_em": sum(bool(s["answer_correct"]) for s in state) / rollout_count,
+        "answer_rate": sum(bool(s["answered"]) for s in state) / rollout_count,
+        "gold_sf_recall": sum(sf_recalls) / rollout_count,
+        "retrieval_calls": total_retrievals / rollout_count,
+        "format_error_rate": sum(bool(s["format_error"]) for s in state) / rollout_count,
+        "empty_retrieval_rate": (
+            sum(s["empty_retrievals"] for s in state) / max(total_retrievals, 1)
+        ),
+    }
+    return trajs_per_question, metrics
 
 # ── Training loop ──────────────────────────────────────────────────────────────
 
@@ -319,7 +434,7 @@ def train(args):
     )
     lora_cfg = LoraConfig(
         r=args.lora_rank, lora_alpha=args.lora_rank * 2,
-        target_modules="all-linear", lora_dropout=0.05, bias="none",
+        target_modules="all-linear", lora_dropout=0.0, bias="none",
     )
     model = get_peft_model(base, lora_cfg)
     model.enable_input_require_grads()
@@ -338,6 +453,13 @@ def train(args):
         ds = ds.select(range(min(args.max_samples, len(ds))))
     data = list(ds)
     log.info(f"[GRPO-RSF-vLLM] Training on {len(data)} samples")
+
+    reward_config = RewardConfig(
+        answer=args.lambda_ans,
+        coverage=args.lambda_cov,
+        format_error=args.lambda_fmt,
+        retrieval_cost=args.retrieval_cost,
+    )
 
     os.makedirs(args.save_path, exist_ok=True)
     lora_scratch_dir = os.path.join(args.save_path, "_lora_scratch")
@@ -367,17 +489,36 @@ def train(args):
                 "golden_answers": item["golden_answers"],
             })
 
-        trajs_per_question = vllm_rollout_batch(
+        trajs_per_question, online_metrics = vllm_rollout_batch(
             llm, lora_request, questions, args.n_samples, args.n_turns,
             belief_factory=belief_factory,
+            rollout_temperature=args.rollout_temperature,
+            reward_config=reward_config,
+            collect_metrics=True,
         )
 
-        r_totals_log = [sum(r for _, _, r in traj) for qt in trajs_per_question for traj in qt]
+        r_totals_log = [sum(turn[2] for turn in traj) for qt in trajs_per_question for traj in qt]
         turn_counts_log = [len(traj) for qt in trajs_per_question for traj in qt]
 
         model.train()
         optimizer.zero_grad()
-        loss = grpo_loss_fn(model, trajs_per_question, kl_coef=args.kl_coef)
+        loss, estimator_stats = grpo_loss_fn(
+            model,
+            trajs_per_question,
+            kl_coef=args.kl_coef,
+            clip_eps=args.clip_eps,
+            return_stats=True,
+        )
+        if (
+            args.max_old_logprob_mae is not None
+            and estimator_stats["old_logprob_mae"] > args.max_old_logprob_mae
+        ):
+            raise RuntimeError(
+                "vLLM behavior log-probs and HF policy log-probs are not aligned: "
+                f"MAE={estimator_stats['old_logprob_mae']:.4f} > "
+                f"threshold={args.max_old_logprob_mae:.4f}. Check temperature/logprob "
+                "semantics before training. No optimizer step was applied."
+            )
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         torch.cuda.empty_cache()
@@ -385,8 +526,19 @@ def train(args):
         global_step += 1
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
-        log.info(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
-                 f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
+        log.info(
+            f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
+            f"avg_turns={avg_turns:.2f} | online_EM={online_metrics['answer_em']:.3f} | "
+            f"answer_rate={online_metrics['answer_rate']:.3f} | "
+            f"SF_recall={online_metrics['gold_sf_recall']:.3f} | "
+            f"retrievals={online_metrics['retrieval_calls']:.2f} | "
+            f"fmt={online_metrics['format_error_rate']:.3f} | "
+            f"empty={online_metrics['empty_retrieval_rate']:.3f} | "
+            f"KL={estimator_stats['kl']:.4f} | ratio={estimator_stats['ratio']:.3f} | "
+            f"clip={estimator_stats['clip_fraction']:.3f} | "
+            f"old_lp_mae={estimator_stats['old_logprob_mae']:.4f} | "
+            f"batch={len(batch)}q × {args.n_samples}samples"
+        )
 
         # Hot-swap: save the just-updated adapter under a fresh id/path (not
         # load_inplace on a reused path — untested live, prefer the
@@ -422,6 +574,16 @@ if __name__ == "__main__":
     parser.add_argument("--lora_rank",    type=int, default=64)
     parser.add_argument("--lr",           type=float, default=5e-5)
     parser.add_argument("--kl_coef",      type=float, default=0.01)
+    parser.add_argument("--clip_eps",     type=float, default=0.2)
+    parser.add_argument("--rollout_temperature", type=float, default=0.7,
+                         help="One shared sampling temperature for every rollout in a GRPO group.")
+    parser.add_argument("--max_old_logprob_mae", type=float, default=None,
+                         help="Optional fail-fast threshold for vLLM-vs-HF sampled-token "
+                              "logprob alignment, checked before optimizer.step().")
+    parser.add_argument("--lambda_ans", type=float, default=LAMBDA_ANS)
+    parser.add_argument("--lambda_cov", type=float, default=LAMBDA_COV)
+    parser.add_argument("--lambda_fmt", type=float, default=LAMBDA_FMT)
+    parser.add_argument("--retrieval_cost", type=float, default=RETRIEVAL_COST)
     parser.add_argument("--save_steps",   type=int, default=25)
     parser.add_argument("--max_samples",  type=int, default=5000)
     parser.add_argument("--vllm_gpu_mem_frac", type=float, default=0.45,
@@ -429,10 +591,9 @@ if __name__ == "__main__":
                               "the rest is left for the separate HF+PEFT "
                               "training model. Tune down if OOM.")
     parser.add_argument("--use_acec", action="store_true", default=False,
-                         help="Use ACECBeliefState's potential-shaped coverage "
-                              "reward (R_cov) instead of the gold supporting-"
-                              "facts marginal for retrieval-turn rewards. See "
-                              "module docstring's --use_acec section.")
+                         help="Use ACECBeliefState's coverage delta instead of the gold "
+                              "supporting-facts delta. Both arms use the same reward "
+                              "weights and retrieval cost.")
     parser.add_argument("--e5_model_path", type=str,
                          default=os.path.join(os.path.expanduser("~"), "models", "e5-base-v2"),
                          help="Only used when --use_acec is set (ACEC's action labeler).")
@@ -443,6 +604,15 @@ if __name__ == "__main__":
                               "(run_scripts/15_build_acec_calibration.sh's --out_dir). "
                               "Only used when --use_acec is set; omitting it falls back "
                               "to uncalibrated ACECConfig() defaults (see module docstring).")
+    parser.add_argument("--acec_artifact_v2", type=str, default=None,
+                         help="Versioned calibration-v2 artifact. Preferred over the legacy "
+                              "--acec_observation_model when supplied.")
+    parser.add_argument("--acec_k_mode", choices=("fixed", "uniform", "predictor"),
+                         default="fixed",
+                         help="K posterior source. HotpotQA runs should use fixed with K=2; "
+                              "predictor requires --acec_artifact_v2.")
+    parser.add_argument("--acec_fixed_k", type=int, default=2,
+                         help="Fixed K used when --acec_k_mode=fixed.")
     parser.add_argument("--acec_tau_new", type=float, default=None,
                          help="Optional override for ACECConfig.tau_new. Only used when "
                               "--use_acec is set.")

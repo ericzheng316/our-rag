@@ -24,13 +24,18 @@ GRPO  : turn-level advantages (design doc Section 3.2), not one scalar per
 """
 
 import argparse, json, logging, math, os, re, requests, string
-from typing import List, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 import torch
-import torch.nn.functional as F
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from grpo_estimator_v2 import (
+    RewardConfig,
+    clipped_grpo_token_loss,
+    completion_token_logprobs,
+)
 
 # print() to a pipe (`python ... | tee log`) is block-buffered by default —
 # lines sit in Python's internal buffer and don't reach the log file until it
@@ -46,8 +51,10 @@ RETRIEVE_K   = int(os.environ.get("RETRIEVE_K", "5"))
 MAX_DOCS     = int(os.environ.get("MAX_DOCS", "10"))
 
 LAMBDA_ANS = 1.0
-LAMBDA_SF  = 0.5
+LAMBDA_COV = 0.3
+LAMBDA_SF  = LAMBDA_COV  # Backward-compatible name; both reward modes use LAMBDA_COV.
 LAMBDA_FMT = 0.1
+RETRIEVAL_COST = 0.05
 STOP_TOKEN = 151645   # Qwen2.5 <|im_end|>
 
 # ── Reward helpers ─────────────────────────────────────────────────────────────
@@ -204,12 +211,16 @@ def apply_chat_template(user_content: str) -> str:
 @torch.no_grad()
 def rollout(model, tokenizer, question: str, sf_titles: List[str],
             golden_answers: List[str], n_turns: int = 5,
-            temperature: float = 0.7) -> List[Tuple[torch.Tensor, torch.Tensor, float]]:
+            temperature: float = 0.7,
+            reward_config: RewardConfig = RewardConfig()) -> List[Tuple]:
     """
-    Returns list of (input_ids, output_ids, step_reward) for each turn.
-    input_ids  : context tokens fed to model this turn (1D, on GPU)
-    output_ids : newly generated tokens (1D, on GPU)
-    step_reward: R_sf_t for query steps, R_ans for answer step
+    Returns (input_ids, output_ids, step_reward, old_logprobs, temperature)
+    for each turn.
+      input_ids: context tokens fed to the model (1D, on GPU)
+      output_ids: newly generated tokens (1D, on GPU)
+      step_reward: unified coverage progress - retrieval cost, or R_ans
+      old_logprobs: None here; grpo_loss_fn snapshots the unchanged HF policy
+      temperature: behavior-policy temperature used for this rollout
     """
     turns = []
     context = f"The question: {question}"
@@ -237,12 +248,12 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
         d = parse_step(step_text)
 
         if not d.get("analysis"):
-            turns.append((input_ids[0], new_tokens, -LAMBDA_FMT))
+            turns.append((input_ids[0], new_tokens, -reward_config.format_error, None, temperature))
             break
 
         if d.get("answer"):
-            r_ans = LAMBDA_ANS if exact_match(d["answer"], golden_answers) else 0.0
-            turns.append((input_ids[0], new_tokens, r_ans))
+            r_ans = reward_config.answer_reward(exact_match(d["answer"], golden_answers))
+            turns.append((input_ids[0], new_tokens, r_ans, None, temperature))
             break
 
         if d.get("query"):
@@ -255,7 +266,9 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
             doc_text = "\n".join(new_docs)
 
             r_sf, found_sf = rsf_marginal(doc_text, sf_titles, found_sf)
-            turns.append((input_ids[0], new_tokens, LAMBDA_SF * r_sf))
+            turns.append(
+                (input_ids[0], new_tokens, reward_config.retrieval_reward(r_sf), None, temperature)
+            )
 
             step_str = (f"Step {t + 1}:\nThe problem analysis: {d['analysis']}\n"
                         f"The retrieval query: {d['query']}\n"
@@ -264,19 +277,38 @@ def rollout(model, tokenizer, question: str, sf_titles: List[str],
 
             if t == n_turns - 1:
                 # Ran out of turns — small penalty for not answering
-                turns[-1] = (turns[-1][0], turns[-1][1], turns[-1][2] - LAMBDA_FMT)
+                last = turns[-1]
+                turns[-1] = (last[0], last[1], last[2] - reward_config.format_error, last[3], last[4])
         else:
-            turns.append((input_ids[0], new_tokens, -LAMBDA_FMT))
+            turns.append((input_ids[0], new_tokens, -reward_config.format_error, None, temperature))
             break
 
     return turns
 
 # ── GRPO loss ──────────────────────────────────────────────────────────────────
 
-def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0.01):
+def _unpack_turn(turn: Tuple) -> Tuple[torch.Tensor, torch.Tensor, float, Optional[torch.Tensor], float]:
+    """Accept v2 turns while retaining read compatibility with old 3-tuples."""
+    if len(turn) == 3:
+        inp_ids, out_ids, reward = turn
+        return inp_ids, out_ids, reward, None, 1.0
+    if len(turn) == 5:
+        inp_ids, out_ids, reward, old_logprobs, temperature = turn
+        return inp_ids, out_ids, reward, old_logprobs, float(temperature)
+    raise ValueError(f"unexpected turn tuple length: {len(turn)}")
+
+
+def grpo_loss_fn(
+    model,
+    trajs_per_question: List[List[List]],
+    kl_coef: float = 0.01,
+    clip_eps: float = 0.2,
+    return_stats: bool = False,
+):
     """
     trajs_per_question : list (over questions) of lists (over G samples) of
-                         list of (input_ids, output_ids, reward) tuples
+                         list of (input_ids, output_ids, reward,
+                         old_logprobs, temperature) tuples
 
     Uses a single model: LoRA enabled for policy, disabled for reference.
     This halves VRAM vs loading two separate model copies.
@@ -293,15 +325,20 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
     just optimizer.step() after this returns.
     """
     total_loss = 0.0
+    total_kl = 0.0
+    total_ratio = 0.0
+    total_clip_fraction = 0.0
+    total_old_logprob_mae = 0.0
     n = 0
 
     for question_trajs in trajs_per_question:
-        reward_lists = [[r for _, _, r in traj] for traj in question_trajs]
+        reward_lists = [[_unpack_turn(turn)[2] for turn in traj] for traj in question_trajs]
         group_returns = [turn_level_returns(rl) for rl in reward_lists]
         group_advantages = turn_level_advantages(group_returns)
 
         for traj, advantages in zip(question_trajs, group_advantages):
-            for t, (inp_ids, out_ids, _) in enumerate(traj):
+            for t, turn in enumerate(traj):
+                inp_ids, out_ids, _, old_token_lp, temperature = _unpack_turn(turn)
                 if out_ids.numel() == 0:
                     continue
 
@@ -310,36 +347,61 @@ def grpo_loss_fn(model, trajs_per_question: List[List[List]], kl_coef: float = 0
                 adv_t = torch.tensor(advantages[t], dtype=torch.float32, device="cuda")
 
                 full = torch.cat([inp_ids, out_ids]).unsqueeze(0)   # (1, L)
-                n_out = out_ids.shape[0]
 
                 # ── policy log-probs (LoRA enabled) ───────────────────────────
                 model.enable_adapter_layers()
-                logits = model(full).logits                           # (1, L, V)
-                lp = F.log_softmax(logits[0], dim=-1)                # (L, V)
-                pred_lp = lp[-(n_out + 1):-1]                       # (n_out, V)
-                token_lp = pred_lp.gather(1, out_ids.unsqueeze(1)).squeeze(1)  # (n_out,)
+                logits = model(full).logits
+                token_lp = completion_token_logprobs(logits, out_ids, temperature)
+
+                # HF serial rollouts use the same, still-unmodified model for
+                # collection and this one optimizer step.  Detaching the
+                # current token log-probs therefore snapshots pi_old exactly.
+                if old_token_lp is None:
+                    old_token_lp = token_lp.detach()
+                else:
+                    old_token_lp = old_token_lp.to(device=token_lp.device, dtype=token_lp.dtype)
 
                 # ── ref log-probs (LoRA disabled → base model) ────────────────
                 with torch.no_grad():
                     model.disable_adapter_layers()
                     ref_logits = model(full).logits
-                    ref_lp = F.log_softmax(ref_logits[0], dim=-1)
-                    ref_pred_lp = ref_lp[-(n_out + 1):-1]
-                    ref_token_lp = ref_pred_lp.gather(1, out_ids.unsqueeze(1)).squeeze(1)
+                    ref_token_lp = completion_token_logprobs(ref_logits, out_ids, temperature)
+                    del ref_logits
                 model.enable_adapter_layers()
 
-                pg  = -adv_t * token_lp.mean()
-                kl  = (token_lp - ref_token_lp).mean()   # approx KL
-                turn_loss = pg + kl_coef * kl
+                turn_loss, turn_stats = clipped_grpo_token_loss(
+                    token_lp,
+                    old_token_lp,
+                    ref_token_lp,
+                    adv_t,
+                    clip_eps=clip_eps,
+                    kl_coef=kl_coef,
+                )
                 turn_loss.backward()
                 total_loss += turn_loss.item()
+                total_kl += float(turn_stats["kl"])
+                total_ratio += float(turn_stats["ratio_mean"])
+                total_clip_fraction += float(turn_stats["clip_fraction"])
+                total_old_logprob_mae += float(turn_stats["old_logprob_mae"])
                 n += 1
+                # Do not let the previous turn's full sequence-by-vocabulary
+                # logits survive until the next forward.  The graph is already
+                # consumed by backward; keeping the Python references creates
+                # an avoidable peak that matters when vLLM reserves 55-60%.
+                del logits, token_lp, ref_token_lp, turn_loss
 
     for p in model.parameters():
         if p.grad is not None:
             p.grad /= max(n, 1)
 
-    return total_loss / max(n, 1)
+    loss_value = total_loss / max(n, 1)
+    stats = {
+        "kl": total_kl / max(n, 1),
+        "ratio": total_ratio / max(n, 1),
+        "clip_fraction": total_clip_fraction / max(n, 1),
+        "old_logprob_mae": total_old_logprob_mae / max(n, 1),
+    }
+    return (loss_value, stats) if return_stats else loss_value
 
 # ── Training loop ──────────────────────────────────────────────────────────────
 
@@ -358,7 +420,7 @@ def train(args):
     )
     lora_cfg = LoraConfig(
         r=args.lora_rank, lora_alpha=args.lora_rank * 2,
-        target_modules="all-linear", lora_dropout=0.05, bias="none",
+        target_modules="all-linear", lora_dropout=0.0, bias="none",
     )
     model = get_peft_model(base, lora_cfg)
     model.enable_input_require_grads()
@@ -376,6 +438,13 @@ def train(args):
         ds = ds.select(range(min(args.max_samples, len(ds))))
     data = list(ds)
     log.info(f"[GRPO-RSF] Training on {len(data)} samples")
+
+    reward_config = RewardConfig(
+        answer=args.lambda_ans,
+        coverage=args.lambda_cov,
+        format_error=args.lambda_fmt,
+        retrieval_cost=args.retrieval_cost,
+    )
 
     os.makedirs(args.save_path, exist_ok=True)
     global_step = 0
@@ -399,12 +468,13 @@ def train(args):
 
             question_trajs = []
             for g in range(args.n_samples):
-                temp = 0.3 + g * 0.2       # diverse temperatures: 0.3, 0.5, 0.7, 0.9
+                temp = args.rollout_temperature
                 model.eval()
                 traj = rollout(model, tokenizer, q, sf_titles, golds,
-                               n_turns=args.n_turns, temperature=temp)
+                               n_turns=args.n_turns, temperature=temp,
+                               reward_config=reward_config)
                 question_trajs.append(traj)
-                r_totals_log.append(sum(r for _, _, r in traj))
+                r_totals_log.append(sum(_unpack_turn(turn)[2] for turn in traj))
                 turn_counts_log.append(len(traj))
                 torch.cuda.empty_cache()
 
@@ -413,7 +483,13 @@ def train(args):
         # ── Gradient step ──────────────────────────────────────────────────────
         model.train()
         optimizer.zero_grad()
-        loss = grpo_loss_fn(model, trajs_per_question, kl_coef=args.kl_coef)
+        loss, estimator_stats = grpo_loss_fn(
+            model,
+            trajs_per_question,
+            kl_coef=args.kl_coef,
+            clip_eps=args.clip_eps,
+            return_stats=True,
+        )
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         torch.cuda.empty_cache()
@@ -422,7 +498,10 @@ def train(args):
         mean_r = sum(r_totals_log) / max(len(r_totals_log), 1)
         avg_turns = sum(turn_counts_log) / max(len(turn_counts_log), 1)
         log.info(f"Episode {episode + 1:4d} | loss={loss:.4f} | mean_R={mean_r:.3f} | "
-                 f"avg_turns={avg_turns:.2f} | batch={len(batch)}q × {args.n_samples}samples")
+                 f"avg_turns={avg_turns:.2f} | KL={estimator_stats['kl']:.4f} | "
+                 f"ratio={estimator_stats['ratio']:.3f} | clip={estimator_stats['clip_fraction']:.3f} | "
+                 f"old_lp_mae={estimator_stats['old_logprob_mae']:.4f} | "
+                 f"batch={len(batch)}q × {args.n_samples}samples")
 
         if global_step % args.save_steps == 0:
             ckpt = os.path.join(args.save_path, f"step_{global_step}")
@@ -448,6 +527,13 @@ if __name__ == "__main__":
     parser.add_argument("--lora_rank",    type=int, default=16)
     parser.add_argument("--lr",           type=float, default=5e-5)
     parser.add_argument("--kl_coef",      type=float, default=0.01)
+    parser.add_argument("--clip_eps",     type=float, default=0.2)
+    parser.add_argument("--rollout_temperature", type=float, default=0.7,
+                        help="One shared sampling temperature for every rollout in a GRPO group.")
+    parser.add_argument("--lambda_ans", type=float, default=LAMBDA_ANS)
+    parser.add_argument("--lambda_cov", type=float, default=LAMBDA_COV)
+    parser.add_argument("--lambda_fmt", type=float, default=LAMBDA_FMT)
+    parser.add_argument("--retrieval_cost", type=float, default=RETRIEVAL_COST)
     parser.add_argument("--save_steps",   type=int, default=50)
     parser.add_argument("--max_samples",  type=int, default=None)
     args = parser.parse_args()
