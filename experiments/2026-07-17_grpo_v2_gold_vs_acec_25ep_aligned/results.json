@@ -1,0 +1,71 @@
+{
+  "status": "completed",
+  "date": "2026-07-17",
+  "git_commit": "4a4999b45950e105ccf9318df731d72140841866",
+  "conclusion": "Both arms were stable after the estimator alignment repair. In this single 25-episode run, ACEC-v3 retrieved more and had slightly higher Gold SF recall, but had lower online EM than Gold-SF. A fixed held-out evaluation is required before changing ACEC.",
+  "shared_config": {
+    "num_episodes": 25,
+    "batch_size_questions": 16,
+    "samples_per_question": 8,
+    "distinct_questions": 400,
+    "lora_rank": 64,
+    "rollout_temperature": 0.7,
+    "vllm_gpu_memory_fraction": 0.6,
+    "retriever_precision": "fp32",
+    "retrieval_mode": "batched GPU FAISS",
+    "acec_artifact": "/root/data/logs/acec_calibration_v3_tau090_20260715/acec_calibration_v3.json",
+    "acec_k_mode": "fixed",
+    "acec_fixed_k": 2,
+    "engine_hf_logprob_mae_gate": 0.05
+  },
+  "gold": {
+    "runtime_seconds": 2574,
+    "all25": {
+      "mean_reward": 0.3589,
+      "online_em": 0.2685,
+      "answer_rate": 0.9918,
+      "gold_sf_recall": 0.6429,
+      "retrieval_calls": 1.5752,
+      "format_error_rate": 0.0013,
+      "kl": 0.01285,
+      "ratio": 1.0,
+      "clip_fraction": 0.0,
+      "engine_logprob_mae": 0.00381
+    },
+    "first10": {"online_em": 0.1705, "gold_sf_recall": 0.6449, "retrieval_calls": 1.6170, "kl": 0.00251},
+    "episodes11_20": {"online_em": 0.3210, "gold_sf_recall": 0.6706, "retrieval_calls": 1.5530, "kl": 0.01403},
+    "last5": {"online_em": 0.3594, "gold_sf_recall": 0.5836, "retrieval_calls": 1.5360, "kl": 0.03116},
+    "checkpoint": "/root/data/logs/gold_corrected_25ep_16q8s_fp32_060_20260717/vllm_0.60/ckpt",
+    "launch_log": "/root/data/logs/gold_corrected_25ep_16q8s_fp32_060_20260717.launch.log"
+  },
+  "acec_v3": {
+    "runtime_seconds": 3107,
+    "all25": {
+      "mean_reward": 0.2696,
+      "online_em": 0.2319,
+      "answer_rate": 0.9875,
+      "gold_sf_recall": 0.6666,
+      "retrieval_calls": 1.7132,
+      "format_error_rate": 0.0006,
+      "kl": 0.00837,
+      "ratio": 1.0,
+      "clip_fraction": 0.0,
+      "engine_logprob_mae": 0.00372
+    },
+    "first10": {"online_em": 0.1477, "gold_sf_recall": 0.6702, "retrieval_calls": 1.6980, "kl": 0.00168},
+    "episodes11_20": {"online_em": 0.2797, "gold_sf_recall": 0.7007, "retrieval_calls": 1.7450, "kl": 0.00958},
+    "last5": {"online_em": 0.3046, "gold_sf_recall": 0.5914, "retrieval_calls": 1.6800, "kl": 0.01932},
+    "checkpoint": "/root/data/logs/acec_v3_25ep_16q8s_fp32_060_20260717/ckpt",
+    "launch_log": "/root/data/logs/acec_v3_25ep_16q8s_fp32_060_20260717.launch.log"
+  },
+  "paired_episode_index_comparison": {
+    "acec_minus_gold_online_em": -0.0366,
+    "online_em_difference_sd": 0.0468,
+    "online_em_difference_se": 0.0094,
+    "acec_wins": 3,
+    "ties": 2,
+    "acec_losses": 20,
+    "acec_minus_gold_sf_recall": 0.0237,
+    "acec_minus_gold_retrieval_calls": 0.1380
+  }
+}
