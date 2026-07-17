@@ -42,6 +42,12 @@ class TurnResult:
     # NLI score, gold-hit) table" — offline_fit.py needs these raw scores, not
     # just the aggregated coverage features.
     slot_scores: Dict[int, float] = field(default_factory=dict)
+    # Exact evidence item that produced each max-NLI slot score.  Calibration
+    # must label this selected document rather than asking whether any other
+    # document in the same retrieval batch happened to be a gold title.
+    # Exposing the already-computed argmax is diagnostic-only: it does not
+    # change the belief update or document selection rule.
+    slot_best_docs: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     # Diagnostics: the max cosine similarity ActionLabeler saw against existing
     # slots this turn (None if there were none) — exposes what's actually
     # driving the DECOMPOSE-vs-REWRITE/EXPAND routing decision.
@@ -92,7 +98,17 @@ class ACECBeliefState:
 
         if is_answer:
             action = ActionLabel(ActionMode.ANSWER, None)
-            return TurnResult(cb.features(), coverage_before, coverage_before, 0.0, action, None, True, {})
+            return TurnResult(
+                cb.features(),
+                coverage_before,
+                coverage_before,
+                0.0,
+                action,
+                None,
+                True,
+                {},
+                {},
+            )
 
         slot_hyps = [s.hypothesis for s in cb.slots]
         action = self.labeler.label(query or "", slot_hyps)
@@ -153,6 +169,7 @@ class ACECBeliefState:
             suggested_target_slot=cb.suggest_target_slot(),
             stop_voi=cb.should_stop_voi(),
             slot_scores=slot_scores,
+            slot_best_docs=slot_best_doc,
             label_max_sim=label_max_sim,
         )
 

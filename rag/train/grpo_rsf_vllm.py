@@ -134,14 +134,32 @@ def make_belief_factory(args) -> BeliefFactory:
     acec_nli_scorer = CrossEncoderNLIScorer(args.acec_nli_model)
 
     acec_config = ACECConfig()
-    if args.acec_artifact_v2 and args.acec_artifact_v3:
-        raise ValueError("supply only one of --acec_artifact_v2 and --acec_artifact_v3")
+    artifact_flags = [
+        args.acec_artifact_v2,
+        args.acec_artifact_v3,
+        args.acec_artifact_v4,
+    ]
+    if sum(path is not None for path in artifact_flags) > 1:
+        raise ValueError(
+            "supply only one of --acec_artifact_v2, --acec_artifact_v3, "
+            "and --acec_artifact_v4"
+        )
 
     artifact = None
     build_k_predictor = build_k_predictor_v2
     artifact_path = None
     artifact_version = None
-    if args.acec_artifact_v3:
+    if args.acec_artifact_v4:
+        from belief.acec.calibration_v4 import (
+            build_k_predictor as build_k_predictor_v4,
+            load_calibration_artifact_v4,
+        )
+
+        artifact = load_calibration_artifact_v4(args.acec_artifact_v4)
+        build_k_predictor = build_k_predictor_v4
+        artifact_path = args.acec_artifact_v4
+        artifact_version = 4
+    elif args.acec_artifact_v3:
         from belief.acec.calibration_v3 import (
             build_k_predictor as build_k_predictor_v3,
             load_calibration_artifact_v3,
@@ -166,12 +184,12 @@ def make_belief_factory(args) -> BeliefFactory:
         if artifact_tau_new is not None:
             acec_config.tau_new = float(artifact_tau_new)
         acec_config.hit_prior_alpha0, acec_config.hit_prior_beta0 = hit_rates_to_beta_priors(hit_rates)
-        if artifact_version == 3 and args.acec_k_mode == "fixed":
+        if artifact_version in (3, 4) and args.acec_k_mode == "fixed":
             calibrated_fixed_k = artifact.metadata.get("fixed_k")
             if calibrated_fixed_k is not None and int(calibrated_fixed_k) != args.acec_fixed_k:
                 raise ValueError(
                     f"runtime fixed_k={args.acec_fixed_k} conflicts with "
-                    f"v3 artifact fixed_k={calibrated_fixed_k}"
+                    f"v{artifact_version} artifact fixed_k={calibrated_fixed_k}"
                 )
         log.info(
             f"[GRPO-RSF-vLLM] [ACEC] Loaded v{artifact_version} calibration "
@@ -661,6 +679,10 @@ if __name__ == "__main__":
     parser.add_argument("--acec_artifact_v3", type=str, default=None,
                          help="Strict calibration-v3 artifact with monotonic posteriors. "
                               "Preferred over v2 for new ACEC runs.")
+    parser.add_argument("--acec_artifact_v4", type=str, default=None,
+                         help="Calibration-v4 artifact whose max-NLI score is labeled by "
+                              "the exact runtime-selected evidence document. Preferred "
+                              "over older artifacts for new ACEC runs.")
     parser.add_argument("--acec_k_mode", choices=("fixed", "uniform", "predictor"),
                          default="fixed",
                          help="K posterior source. HotpotQA runs should use fixed with K=2; "
