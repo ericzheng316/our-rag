@@ -1,0 +1,157 @@
+{
+  "status": "completed",
+  "date": "2026-07-20",
+  "git_commit": "a4d44be1f78194c47a6761106c4cb214965f7e99",
+  "conclusion": "ACEC-v4 fixed the score/document label alignment bug and ran stably, but produced lower online EM and Gold supporting-fact recall than v3 while retrieving less. The next work should improve supporting-sentence slot labels and the evidence verifier, then validate the operational binding threshold before full-scale GRPO.",
+  "shared_config": {
+    "num_episodes": 25,
+    "batch_size_questions": 16,
+    "samples_per_question": 8,
+    "distinct_questions": 400,
+    "lora_rank": 64,
+    "rollout_temperature": 0.7,
+    "vllm_gpu_memory_fraction": 0.6,
+    "retriever_precision": "fp32",
+    "retrieval_mode": "batched GPU FAISS",
+    "acec_artifact": "/root/data/logs/acec_calibration_v4_20260720/acec_calibration_v4.json",
+    "acec_label_schema": "selected_evidence_title_v1",
+    "acec_k_mode": "fixed",
+    "acec_fixed_k": 2,
+    "engine_hf_logprob_mae_gate": 0.05
+  },
+  "artifact_v4": {
+    "fit_labeled_rows": 691,
+    "fit_positive_rows": 118,
+    "fit_negative_rows": 573,
+    "fit_unknown_rows": 39,
+    "fit_positive_rate": 0.1707670043,
+    "validation": {
+      "n": 236,
+      "raw_nli_auc": 0.8770226537,
+      "posterior_auc": 0.8760517799,
+      "brier": 0.1263445835,
+      "ece": 0.1278570548
+    },
+    "test": {
+      "n": 244,
+      "raw_nli_auc": 0.8996240983,
+      "posterior_auc": 0.8760540486,
+      "brier": 0.1609050851,
+      "ece": 0.1615397779
+    },
+    "hit_rates": {
+      "EXPAND": 0.1018383691,
+      "REWRITE": 0.1646341463,
+      "DECOMPOSE": 0.17280178
+    },
+    "old_v3_false_positives_found": 64,
+    "corrected_negatives_with_nli_gte_0_9": 116,
+    "posterior_gte_0_7": {
+      "validation_precision": 0.4545,
+      "validation_recall": 0.6667,
+      "test_precision": 0.5818,
+      "test_recall": 0.6275
+    },
+    "target_nli_needed_for_single_update_posterior_0_7": {
+      "EXPAND": 0.9439,
+      "REWRITE": 0.9094,
+      "DECOMPOSE": 0.9048
+    }
+  },
+  "acec_v4": {
+    "runtime_seconds": 3063,
+    "all25": {
+      "mean_reward": 0.2488,
+      "online_em": 0.21844,
+      "answer_rate": 0.99368,
+      "gold_sf_recall": 0.62196,
+      "retrieval_calls": 1.5416,
+      "format_error_rate": 0.00064,
+      "kl": 0.010944,
+      "ratio": 1.0,
+      "clip_fraction": 0.0,
+      "engine_logprob_mae": 0.00374
+    },
+    "first10": {
+      "online_em": 0.1399,
+      "gold_sf_recall": 0.6449,
+      "retrieval_calls": 1.6,
+      "kl": 0.00158
+    },
+    "episodes11_20": {
+      "online_em": 0.2625,
+      "gold_sf_recall": 0.6355,
+      "retrieval_calls": 1.51,
+      "kl": 0.01246
+    },
+    "last5": {
+      "online_em": 0.2874,
+      "gold_sf_recall": 0.549,
+      "retrieval_calls": 1.488,
+      "kl": 0.02664
+    },
+    "checkpoint": "/root/data/logs/acec_v4_25ep_16q8s_fp32_060_20260720/ckpt",
+    "train_log": "/root/data/logs/acec_v4_25ep_16q8s_fp32_060_20260720/train.log"
+  },
+  "acec_v3": {
+    "runtime_seconds": 3107,
+    "all25": {
+      "mean_reward": 0.26964,
+      "online_em": 0.23188,
+      "answer_rate": 0.98748,
+      "gold_sf_recall": 0.66664,
+      "retrieval_calls": 1.7132,
+      "format_error_rate": 0.00064,
+      "kl": 0.008368,
+      "ratio": 1.0,
+      "clip_fraction": 0.0,
+      "engine_logprob_mae": 0.00372
+    }
+  },
+  "gold": {
+    "runtime_seconds": 2574,
+    "all25": {
+      "mean_reward": 0.35888,
+      "online_em": 0.26848,
+      "answer_rate": 0.99184,
+      "gold_sf_recall": 0.64292,
+      "retrieval_calls": 1.5752,
+      "format_error_rate": 0.00128,
+      "kl": 0.012848,
+      "ratio": 1.0,
+      "clip_fraction": 0.0,
+      "engine_logprob_mae": 0.003808
+    }
+  },
+  "paired_episode_index_comparison": {
+    "v4_minus_v3": {
+      "online_em": -0.01344,
+      "online_em_difference_sd": 0.036142173,
+      "online_em_difference_se": 0.007228435,
+      "wins": 6,
+      "ties": 5,
+      "losses": 14,
+      "gold_sf_recall": -0.04468,
+      "retrieval_calls": -0.1716,
+      "kl": 0.002576
+    },
+    "v4_minus_gold": {
+      "online_em": -0.05004,
+      "online_em_difference_sd": 0.054815205,
+      "online_em_difference_se": 0.010963041,
+      "wins": 2,
+      "ties": 4,
+      "losses": 19,
+      "gold_sf_recall": -0.02096,
+      "retrieval_calls": -0.0336,
+      "kl": -0.001904
+    }
+  },
+  "retriever_batch_check": {
+    "queries": 16,
+    "same_top5_set": 16,
+    "same_order": 15,
+    "minimum_top5_overlap": 5,
+    "maximum_common_score_difference": 0.00050646
+  }
+}
