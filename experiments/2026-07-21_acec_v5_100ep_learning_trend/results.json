@@ -1,0 +1,178 @@
+{
+  "status": "completed_with_metric_followup_required",
+  "date": "2026-07-21",
+  "training_runtime_commit": "9d31b7c",
+  "runner_commit": "eab4961",
+  "evaluation_commit": "7e1b03e",
+  "conclusion": "The 100-episode ACEC-v5 run was stable and showed a strong online learning trend. On a fixed 256-question held-out subset, episode 50 improved Gold supporting-fact recall while reducing retrieval calls, but the apparent raw whole-answer EM gain is confounded by short-answer canonicalization. Official R3 processed EM/F1 and an independent semantic judge are required before claiming improved answer accuracy.",
+  "training_config": {
+    "num_episodes": 100,
+    "batch_size_questions": 16,
+    "samples_per_question": 8,
+    "distinct_training_questions": 1600,
+    "total_rollouts": 12800,
+    "lora_rank": 64,
+    "rollout_temperature": 0.7,
+    "vllm_gpu_memory_fraction": 0.6,
+    "retriever_precision": "fp32",
+    "retrieval_mode": "batched GPU FAISS",
+    "checkpoint_episodes": [25, 50, 75, 100],
+    "acec_artifact": "/root/data/logs/acec_v5_tau075_calib1000_b738c85/acec_calibration_v5.json"
+  },
+  "training": {
+    "runtime_seconds": 13326,
+    "all100": {
+      "mean_reward": 0.5072,
+      "online_answer_metric": 0.4167,
+      "gold_sf_recall": 0.6743,
+      "retrieval_calls": 1.4368,
+      "average_turns": 2.4349,
+      "kl": 0.0568,
+      "answer_rate": 0.9972,
+      "format_error_rate": 0.0006,
+      "empty_answers": 0,
+      "derived_acec_coverage": 0.5413,
+      "derived_coverage_per_retrieval": 0.3768
+    },
+    "first10": {
+      "online_answer_metric": 0.1618,
+      "gold_sf_recall": 0.6655,
+      "retrieval_calls": 1.662,
+      "average_turns": 2.652,
+      "kl": 0.0018,
+      "derived_coverage_per_retrieval": 0.3058
+    },
+    "last20": {
+      "online_answer_metric": 0.5153,
+      "gold_sf_recall": 0.697,
+      "retrieval_calls": 1.2875,
+      "kl": 0.091
+    },
+    "last10": {
+      "online_answer_metric": 0.5415,
+      "gold_sf_recall": 0.7152,
+      "retrieval_calls": 1.253,
+      "average_turns": 2.253,
+      "kl": 0.0961,
+      "derived_coverage_per_retrieval": 0.4355
+    },
+    "best_single_episode": {
+      "episode": 92,
+      "online_answer_metric": 0.711,
+      "gold_sf_recall": 0.875,
+      "retrieval_calls": 1.41,
+      "kl": 0.0589
+    },
+    "runtime_metrics": {
+      "turns": 31156,
+      "observations": 19973,
+      "bindings": 14354,
+      "action_counts": {
+        "ANSWER": 12765,
+        "DECOMPOSE": 14474,
+        "EXPAND": 1152,
+        "REWRITE": 2765
+      },
+      "mean_delta_coverage": 0.2226705418,
+      "mean_gain_posterior": 0.7292279846,
+      "mean_novelty": 0.9081839055,
+      "mean_support": 0.4140693176,
+      "exact_repeat_fraction": 0.0,
+      "low_novelty_fraction": 0.0036549342
+    },
+    "checkpoint_root": "/root/data/logs/acec_v5_100epi_16x8_9d31b7c/ckpt",
+    "train_log": "/root/data/logs/acec_v5_100epi_16x8_9d31b7c/train.log"
+  },
+  "heldout_config": {
+    "dataset": "HotpotQA dev",
+    "questions": 256,
+    "selection": "deterministic random subset",
+    "seed": 20260721,
+    "temperature": 0.0,
+    "samples_per_question": 1,
+    "top_k_per_retrieval": 5,
+    "maximum_iterations": 5,
+    "results_path": "/root/data/logs/acec_v5_heldout_dev256_7e1b03e/results.json"
+  },
+  "heldout": {
+    "frozen_r3": {
+      "raw_whole_answer_em": 0.09375,
+      "raw_f1": 0.2266109177,
+      "substring_em": 0.48046875,
+      "gold_sf_recall": 0.69921875,
+      "retrieval_calls": 1.7890625,
+      "answer_rate": 0.98828125,
+      "format_error_rate": 0.0,
+      "empty_answer_rate": 0.0,
+      "runtime_seconds": 99.17
+    },
+    "step25": {
+      "raw_whole_answer_em": 0.27734375,
+      "raw_f1": 0.4041144073,
+      "substring_em": 0.421875,
+      "gold_sf_recall": 0.732421875,
+      "retrieval_calls": 1.57421875,
+      "answer_rate": 1.0,
+      "format_error_rate": 0.0,
+      "empty_answer_rate": 0.0
+    },
+    "step50": {
+      "raw_whole_answer_em": 0.3671875,
+      "raw_f1": 0.4772642962,
+      "substring_em": 0.40625,
+      "gold_sf_recall": 0.732421875,
+      "retrieval_calls": 1.4609375,
+      "answer_rate": 1.0,
+      "format_error_rate": 0.0,
+      "empty_answer_rate": 0.0
+    },
+    "step75": {
+      "raw_whole_answer_em": 0.33203125,
+      "raw_f1": 0.4561559864,
+      "substring_em": 0.3828125,
+      "gold_sf_recall": 0.701171875,
+      "retrieval_calls": 1.41796875,
+      "answer_rate": 1.0,
+      "format_error_rate": 0.0,
+      "empty_answer_rate": 0.0
+    },
+    "step100": {
+      "raw_whole_answer_em": 0.34765625,
+      "raw_f1": 0.4497537983,
+      "substring_em": 0.3828125,
+      "gold_sf_recall": 0.681640625,
+      "retrieval_calls": 1.296875,
+      "answer_rate": 1.0,
+      "format_error_rate": 0.0,
+      "empty_answer_rate": 0.0
+    }
+  },
+  "step50_minus_frozen": {
+    "raw_whole_answer_em": 0.2734375,
+    "raw_f1": 0.2506533785,
+    "substring_em": -0.07421875,
+    "gold_sf_recall": 0.033203125,
+    "retrieval_calls": -0.328125,
+    "retrieval_calls_relative": -0.1834061135
+  },
+  "frozen_no_lora_audit16": {
+    "raw_whole_answer_em": 0.0625,
+    "raw_f1": 0.2153696895,
+    "substring_em": 0.5,
+    "gold_sf_recall": 0.65625,
+    "retrieval_calls": 1.75,
+    "em_agreement_with_no_adapter_request": "16/16",
+    "exact_prediction_agreement": "15/16",
+    "path": "/root/data/logs/r3_frozen_no_lora_audit16_7e1b03e"
+  },
+  "metric_status": {
+    "semantic_answer_accuracy_claim_supported": false,
+    "retrieval_efficiency_improvement_observed": true,
+    "reason": "Raw whole-answer EM and substring EM disagree, and neither reproduces the R3 paper's short-answer-extraction processed EM.",
+    "required_followup": [
+      "official R3 candidate-answer extraction and processed EM/F1",
+      "independent semantic LLM judge",
+      "manual audit of metric disagreements and extraction failures"
+    ]
+  }
+}
