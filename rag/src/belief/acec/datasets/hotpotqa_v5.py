@@ -93,7 +93,15 @@ class HotpotQAEvidenceAdapterV5:
                 )
             )
 
-        question_id = record.get("id", record.get("_id", record.get("question", record.get("problem", ""))))
+        question_id = record.get("_canonical_question_id")
+        if question_id is None:
+            question_id = annotation.get(
+                "id",
+                annotation.get(
+                    "_id",
+                    record.get("id", record.get("_id", record.get("question", record.get("problem", "")))),
+                ),
+            )
         return EvidenceSpecification(
             question_id=str(question_id),
             requirements=tuple(requirements),

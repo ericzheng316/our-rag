@@ -14,6 +14,7 @@ from belief.acec.calibration_v5 import (
     choose_binding_threshold_v5,
     fit_observation_model_v5,
     load_calibration_artifact_v5,
+    posterior_quality_metrics_v5,
     save_calibration_artifact_v5,
 )
 from belief.acec.evidence_standard_v5 import (
@@ -255,7 +256,7 @@ class CalibrationV5Test(unittest.TestCase):
                 strategy,
                 0.8,
                 {"evidence_adapter": "canonical"},
-                {"gate": {"pass": True}},
+                {"gate": {"pass": True}, "undefined_metric": float("nan")},
             )
             loaded = load_calibration_artifact_v5(handle.name)
             self.assertEqual(loaded.k_strategy.fixed_k, 2)
@@ -264,6 +265,9 @@ class CalibrationV5Test(unittest.TestCase):
             handle.seek(0)
             payload = json.load(handle)
             self.assertEqual(payload["artifact_version"], ARTIFACT_VERSION)
+            self.assertIsNone(payload["metrics"]["undefined_metric"])
+            handle.seek(0)
+            self.assertNotIn("NaN", handle.read())
             self.assertNotIn("label_schema", payload)
             payload["supervision_standard"]["target"] = "title hit"
             handle.seek(0)
@@ -272,6 +276,100 @@ class CalibrationV5Test(unittest.TestCase):
             handle.flush()
             with self.assertRaises(ValueError):
                 load_calibration_artifact_v5(handle.name)
+
+    def test_quality_metrics_expose_novelty_shortcut_and_nonrepeat_subset(self):
+        examples = [
+            MarginalUtilityExample("EXPAND", "tgt", False, 0.9, 1.0, True, 0.5),
+            MarginalUtilityExample("EXPAND", "tgt", False, 0.2, 1.0, False, 0.0),
+            MarginalUtilityExample("EXPAND", "tgt", False, 0.9, 0.0, False, 0.0),
+            MarginalUtilityExample("EXPAND", "tgt", False, 0.1, 0.0, False, 0.0),
+        ] * 8
+        model, gain_rates, _ = fit_observation_model_v5(examples)
+        metrics = posterior_quality_metrics_v5(examples, model, gain_rates)
+        self.assertIn("novelty_only_auc", metrics)
+        self.assertIn("posterior_auc_gain_over_novelty", metrics)
+        self.assertEqual(metrics["nonrepeat"]["n"], 16)
+        self.assertGreater(metrics["nonrepeat"]["raw_support_auc"], 0.5)
+
+    def test_builder_recovers_annotation_ids_and_groups_duplicate_questions(self):
+        builder = self._builder_module()
+        question = "Where was Alice born?"
+        annotation = {
+            "_id": "hotpot-q1",
+            "question": question,
+            "context": {
+                "title": ["Alice"],
+                "sentences": [["Alice was born in Paris."]],
+            },
+        }
+        records = builder._join_annotations(
+            [{"problem": question}, {"problem": question}], [annotation]
+        )
+        self.assertTrue(all(builder._record_id(record) == "hotpot-q1" for record in records))
+        self.assertTrue(
+            all(record["_question_id_source"] == "annotation_question_join" for record in records)
+        )
+        entries = builder._annotation_context_entries(records[0])
+        enriched = builder._enrich_document(
+            "Alice: Alice was born in Paris.", entries
+        )
+        self.assertEqual(enriched["document_id"], "hotpot-q1:context:0")
+        self.assertEqual(enriched["document_id_source"], "annotation_context")
+
+        extra = builder._join_annotations(
+            [{"id": f"q{index}", "problem": f"question {index}"} for index in range(8)],
+            [],
+        )
+        fit, validation, test = builder._split_by_question_id(
+            [*records, *extra], validation_frac=0.2, test_frac=0.2, seed=0
+        )
+        memberships = [
+            any(builder._record_id(record) == "hotpot-q1" for record in split)
+            for split in (fit, validation, test)
+        ]
+        self.assertEqual(sum(memberships), 1)
+
+    def test_validity_gate_rejects_shortcut_and_missing_action(self):
+        builder = self._builder_module()
+        examples = [SimpleNamespace() for _ in range(20)]
+        rows = [SimpleNamespace() for _ in range(100)]
+        metrics = {
+            "posterior_auc": 0.95,
+            "average_precision": 0.90,
+            "posterior_auc_gain_over_novelty": 0.01,
+            "nonrepeat": {"n": 20, "raw_support_auc": 0.80},
+        }
+        action_counts = {
+            "EXPAND": {"target_examples": 20},
+            "REWRITE": {"target_examples": 0},
+            "DECOMPOSE": {"target_examples": 20},
+        }
+        provenance = {
+            "dataset_question_id_fraction": 1.0,
+            "corpus_document_id_fraction": 1.0,
+        }
+        gate = builder.evaluate_validity_gate(
+            examples,
+            rows,
+            metrics,
+            action_counts,
+            provenance,
+            0.8,
+            ("EXPAND", "REWRITE", "DECOMPOSE"),
+            min_validation_examples=20,
+            min_validation_fit_eligible_fraction=0.15,
+            min_validation_posterior_auc=0.75,
+            min_validation_average_precision=0.30,
+            min_validation_posterior_gain_over_novelty=0.05,
+            min_validation_nonrepeat_examples=20,
+            min_validation_nonrepeat_raw_support_auc=0.70,
+            min_fit_target_examples_per_action=10,
+            min_dataset_question_id_fraction=1.0,
+            min_corpus_document_id_fraction=0.95,
+        )
+        self.assertFalse(gate["pass"])
+        self.assertIn("posterior_auc_gain_over_novelty", gate["failed_checks"])
+        self.assertIn("fit_target_examples_REWRITE", gate["failed_checks"])
 
     def test_auto_k_uses_fixed_for_constant_requirement_count(self):
         fit = [KExample(np.asarray([1.0, 0.0]), 2) for _ in range(120)]

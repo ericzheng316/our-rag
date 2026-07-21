@@ -12,10 +12,12 @@ provide the canonical evidence manifest consumed by ``CanonicalEvidenceAdapterV5
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
 import sys
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -40,6 +42,8 @@ from belief.acec.calibration_v5 import (  # noqa: E402
     posterior_quality_metrics_v5,
     predict_examples_v5,
     save_calibration_artifact_v5,
+    strict_json_value,
+    dump_strict_json,
 )
 from belief.acec.datasets.canonical_v5 import CanonicalEvidenceAdapterV5  # noqa: E402
 from belief.acec.datasets.hotpotqa_v5 import HotpotQAEvidenceAdapterV5  # noqa: E402
@@ -59,6 +63,7 @@ from belief.acec.offline_fit import KExample  # noqa: E402
 @dataclass
 class MarginalUtilityRow:
     record_id: str
+    question_id_source: str
     question: str
     turn_index: int
     slot_index: int
@@ -69,6 +74,8 @@ class MarginalUtilityRow:
     support_score: float
     novelty_score: float
     selected_document: str
+    selected_document_id: str
+    selected_document_id_source: str
     selected_source_id: str
     evidence_adapter: str
     annotation_version: str
@@ -108,9 +115,35 @@ class NoUsableEvidenceError(ValueError):
     """The record lacks the annotation required by its selected adapter."""
 
 
+def _nonempty_id(payload: Dict[str, Any]) -> str:
+    for key in ("id", "_id", "question_id"):
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
 def _record_id(record: Dict[str, Any]) -> str:
-    value = record.get("id", record.get("_id", ""))
-    return str(value) if value is not None else ""
+    value = _nonempty_id(record)
+    if value:
+        return value
+    canonical = record.get("_canonical_question_id")
+    if canonical is not None and str(canonical).strip():
+        return str(canonical).strip()
+    annotation = record.get("_annotation_record")
+    if isinstance(annotation, dict):
+        value = _nonempty_id(annotation)
+        if value:
+            return value
+    question = _question(record)
+    if question:
+        digest = hashlib.sha256(question.encode("utf-8")).hexdigest()
+        return f"question_sha256:{digest}"
+    return ""
+
+
+def _question_id_source(record: Dict[str, Any]) -> str:
+    return str(record.get("_question_id_source") or "unknown")
 
 
 def _question(record: Dict[str, Any]) -> str:
@@ -118,11 +151,12 @@ def _question(record: Dict[str, Any]) -> str:
     return str(value)
 
 
-def _selected_document(selected_doc: Any) -> Tuple[str, str]:
+def _selected_document(selected_doc: Any) -> Tuple[str, str, str, str]:
     if isinstance(selected_doc, str):
         text = selected_doc
         source_id = text.split(":", 1)[0].strip() if ":" in text else ""
-        return text, source_id
+        digest = hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+        return text, source_id, f"content_sha256:{digest}", "content_sha256"
     if isinstance(selected_doc, dict):
         text = str(selected_doc.get("contents", selected_doc.get("text", "")))
         source_id = str(
@@ -131,8 +165,79 @@ def _selected_document(selected_doc: Any) -> Tuple[str, str]:
                 selected_doc.get("source_id", text.split(":", 1)[0].strip() if ":" in text else ""),
             )
         )
-        return text, source_id
+        document_id = ""
+        for key in ("document_id", "passage_id", "doc_id", "id"):
+            value = selected_doc.get(key)
+            if value is not None and str(value).strip():
+                document_id = str(value).strip()
+                break
+        id_source = str(selected_doc.get("document_id_source") or "native")
+        if not document_id:
+            digest = hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+            document_id = f"content_sha256:{digest}"
+            id_source = "content_sha256"
+        return text, source_id, document_id, id_source
     raise TypeError(f"unsupported selected evidence type: {type(selected_doc).__name__}")
+
+
+def _annotation_context_entries(record: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Index annotated candidate paragraphs by normalized full text.
+
+    Legacy R3 logs store retrieved documents as strings.  HotpotQA annotations
+    still provide an auditable question-scoped paragraph index, so recover a
+    stable ID when the logged text exactly matches that closed candidate pool.
+    """
+
+    annotation = record.get("_annotation_record")
+    if not isinstance(annotation, dict):
+        return {}
+    context = annotation.get("context")
+    pairs: List[Tuple[str, Sequence[str]]] = []
+    if isinstance(context, dict):
+        titles = context.get("title", context.get("titles", []))
+        sentences = context.get("sentences", [])
+        pairs = [(str(title), list(parts)) for title, parts in zip(titles, sentences)]
+    elif isinstance(context, list):
+        for item in context:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                pairs.append((str(item[0]), list(item[1])))
+            elif isinstance(item, dict):
+                title = str(item.get("title", item.get("source", "")))
+                parts = item.get("sentences", item.get("text", []))
+                pairs.append((title, [parts] if isinstance(parts, str) else list(parts)))
+    question_id = _record_id(record)
+    entries: Dict[str, Dict[str, str]] = {}
+    for index, (title, sentences) in enumerate(pairs):
+        text = f"{title}: " + " ".join(str(sentence) for sentence in sentences)
+        entries[normalize_text(text)] = {
+            "document_id": f"{question_id}:context:{index}",
+            "document_id_source": "annotation_context",
+            "source_id": title,
+        }
+    return entries
+
+
+def _enrich_document(
+    document: Any, context_entries: Dict[str, Dict[str, str]]
+) -> Dict[str, Any]:
+    payload = dict(document) if isinstance(document, dict) else {"contents": str(document)}
+    text = str(payload.get("contents", payload.get("text", "")))
+    payload["contents"] = text
+    has_native_id = any(
+        payload.get(key) is not None and str(payload.get(key)).strip()
+        for key in ("document_id", "passage_id", "doc_id", "id")
+    )
+    if has_native_id:
+        payload.setdefault("document_id_source", "native")
+        return payload
+    matched = context_entries.get(normalize_text(text))
+    if matched:
+        payload.update(matched)
+        return payload
+    digest = hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+    payload["document_id"] = f"content_sha256:{digest}"
+    payload["document_id_source"] = "content_sha256"
+    return payload
 
 
 def replay_record(
@@ -153,6 +258,7 @@ def replay_record(
     belief.reset(question)
     split_queries = record.get("split_querys", [])
     docs_per_turn = record.get("docs", [])
+    context_entries = _annotation_context_entries(record)
     per_turn = []
     for turn_index, docs in enumerate(docs_per_turn):
         query = (
@@ -165,7 +271,7 @@ def replay_record(
         }
         result = belief.turn(
             query=query,
-            new_docs=[{"contents": doc} if isinstance(doc, str) else doc for doc in docs],
+            new_docs=[_enrich_document(doc, context_entries) for doc in docs],
             is_answer=False,
         )
         bound_at_score = {
@@ -201,7 +307,12 @@ def replay_record(
                 raise RuntimeError(
                     f"slot {slot_index} has a support score but no selected document"
                 )
-            selected_text, selected_source_id = _selected_document(selected_docs[slot_index])
+            (
+                selected_text,
+                selected_source_id,
+                selected_document_id,
+                selected_document_id_source,
+            ) = _selected_document(selected_docs[slot_index])
             turn_documents.append(selected_text)
             assignment = assignments[slot_index]
             requirement = (
@@ -232,6 +343,7 @@ def replay_record(
             rows.append(
                 MarginalUtilityRow(
                     record_id=_record_id(record),
+                    question_id_source=_question_id_source(record),
                     question=question,
                     turn_index=turn_index,
                     slot_index=slot_index,
@@ -242,6 +354,8 @@ def replay_record(
                     support_score=float(support_score),
                     novelty_score=document_novelty_score(selected_text, prior_documents),
                     selected_document=selected_text,
+                    selected_document_id=selected_document_id,
+                    selected_document_id_source=selected_document_id_source,
                     selected_source_id=selected_source_id,
                     evidence_adapter=specification.adapter_name,
                     annotation_version=specification.annotation_version,
@@ -320,11 +434,16 @@ def summarize_rows(rows: Sequence[MarginalUtilityRow]) -> Dict[str, Any]:
     return {
         "rows": len(rows),
         "fit_eligible_rows": len(eligible),
+        "fit_eligible_fraction": float(len(eligible) / len(rows)) if rows else 0.0,
         "unassessable_rows": len(rows) - len(eligible),
         "new_coverage_rows": len(gains),
         "zero_marginal_gain_rows": len(zero_gain),
         "redundant_support_rows": len(redundant_support),
         "repeated_document_rows": sum(row.repeated_document for row in rows),
+        "action_mode_counts": dict(sorted(Counter(row.action_mode for row in rows).items())),
+        "fit_eligible_action_mode_counts": dict(
+            sorted(Counter(row.action_mode for row in eligible).items())
+        ),
         "mean_marginal_utility": (
             float(np.mean([row.marginal_utility for row in eligible]))
             if eligible
@@ -343,29 +462,221 @@ def _join_annotations(
     records: Sequence[Dict[str, Any]], annotations: Sequence[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     by_id: Dict[str, Dict[str, Any]] = {}
-    by_question: Dict[str, Dict[str, Any]] = {}
+    by_question: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for annotation in annotations:
-        annotation_id = str(annotation.get("id", annotation.get("_id", "")))
+        annotation_id = _nonempty_id(annotation)
         if annotation_id:
+            if annotation_id in by_id:
+                raise ValueError(f"duplicate annotation id: {annotation_id}")
             by_id[annotation_id] = annotation
-        question = str(annotation.get("question", annotation.get("problem", "")))
+        question = _question(annotation)
         if question:
-            by_question[question] = annotation
+            by_question[question].append(annotation)
     joined = []
     for record in records:
-        annotation = by_id.get(_record_id(record)) or by_question.get(_question(record))
         combined = dict(record)
+        native_id = _nonempty_id(record)
+        annotation = by_id.get(native_id) if native_id else None
+        join_mode = "id" if annotation is not None else "none"
+        if annotation is None:
+            question_matches = by_question.get(_question(record), [])
+            if len(question_matches) > 1:
+                raise ValueError(
+                    "question-text annotation join is ambiguous for: " + _question(record)
+                )
+            if question_matches:
+                annotation = question_matches[0]
+                join_mode = "question"
         if annotation is not None:
             combined["_annotation_record"] = annotation
+            annotation_id = _nonempty_id(annotation)
+            if annotation_id:
+                combined["_canonical_question_id"] = annotation_id
+                combined["_question_id_source"] = (
+                    "annotation_id_join" if join_mode == "id" else "annotation_question_join"
+                )
+            elif native_id:
+                combined["_canonical_question_id"] = native_id
+                combined["_question_id_source"] = "native_record_id"
+        elif native_id:
+            combined["_canonical_question_id"] = native_id
+            combined["_question_id_source"] = "native_record_id"
+        else:
+            question = _question(record)
+            digest = hashlib.sha256(question.encode("utf-8")).hexdigest()
+            combined["_canonical_question_id"] = f"question_sha256:{digest}"
+            combined["_question_id_source"] = "question_sha256"
+        combined["_annotation_join_mode"] = join_mode
         joined.append(combined)
     return joined
+
+
+def _split_by_question_id(
+    records: Sequence[Dict[str, Any]],
+    validation_frac: float,
+    test_frac: float,
+    seed: int,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Question-disjoint split that keeps repeated trajectories together."""
+
+    groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        question_id = _record_id(record)
+        if not question_id:
+            raise ValueError("record is missing a stable question identity")
+        groups[question_id].append(record)
+    question_ids = list(groups)
+    random.Random(seed).shuffle(question_ids)
+    n_test = max(1, int(len(question_ids) * test_frac))
+    n_validation = max(1, int(len(question_ids) * validation_frac))
+    if n_test + n_validation >= len(question_ids):
+        raise ValueError("split configuration leaves no fitting question groups")
+    test_ids = set(question_ids[:n_test])
+    validation_ids = set(question_ids[n_test : n_test + n_validation])
+    fit_ids = set(question_ids[n_test + n_validation :])
+    if test_ids & validation_ids or test_ids & fit_ids or validation_ids & fit_ids:
+        raise AssertionError("question-id split overlap")
+
+    def flatten(ids: set[str]) -> List[Dict[str, Any]]:
+        return [
+            record
+            for question_id in question_ids
+            if question_id in ids
+            for record in groups[question_id]
+        ]
+
+    return flatten(fit_ids), flatten(validation_ids), flatten(test_ids)
+
+
+def summarize_provenance(
+    records: Sequence[Dict[str, Any]], rows: Sequence[MarginalUtilityRow]
+) -> Dict[str, Any]:
+    question_sources = Counter(_question_id_source(record) for record in records)
+    join_modes = Counter(str(record.get("_annotation_join_mode") or "none") for record in records)
+    document_sources = Counter(row.selected_document_id_source for row in rows)
+    dataset_id_sources = {"native_record_id", "annotation_id_join", "annotation_question_join"}
+    corpus_id_sources = {"native", "annotation_context"}
+    return {
+        "records": len(records),
+        "unique_question_ids": len({_record_id(record) for record in records}),
+        "question_id_source_counts": dict(sorted(question_sources.items())),
+        "annotation_join_mode_counts": dict(sorted(join_modes.items())),
+        "dataset_question_id_fraction": (
+            sum(count for source, count in question_sources.items() if source in dataset_id_sources)
+            / len(records)
+            if records
+            else 0.0
+        ),
+        "selected_document_rows": len(rows),
+        "selected_document_id_source_counts": dict(sorted(document_sources.items())),
+        "corpus_document_id_fraction": (
+            sum(count for source, count in document_sources.items() if source in corpus_id_sources)
+            / len(rows)
+            if rows
+            else 0.0
+        ),
+    }
+
+
+def evaluate_validity_gate(
+    validation_examples: Sequence[MarginalUtilityExample],
+    validation_rows: Sequence[MarginalUtilityRow],
+    validation_metrics: Dict[str, Any],
+    action_counts: Dict[str, Dict[str, Any]],
+    provenance: Dict[str, Any],
+    binding_threshold: Optional[float],
+    required_action_modes: Sequence[str],
+    *,
+    min_validation_examples: int,
+    min_validation_fit_eligible_fraction: float,
+    min_validation_posterior_auc: float,
+    min_validation_average_precision: float,
+    min_validation_posterior_gain_over_novelty: float,
+    min_validation_nonrepeat_examples: int,
+    min_validation_nonrepeat_raw_support_auc: float,
+    min_fit_target_examples_per_action: int,
+    min_dataset_question_id_fraction: float,
+    min_corpus_document_id_fraction: float,
+) -> Dict[str, Any]:
+    """Evaluate evidence validity, not merely artifact build success."""
+
+    checks: Dict[str, Dict[str, Any]] = {}
+
+    def minimum_check(name: str, value: Any, minimum: float) -> None:
+        numeric = float(value) if value is not None else float("nan")
+        checks[name] = {
+            "value": numeric,
+            "minimum": minimum,
+            "pass": bool(np.isfinite(numeric) and numeric >= minimum),
+        }
+
+    minimum_check("validation_examples", len(validation_examples), min_validation_examples)
+    eligible_fraction = (
+        len(validation_examples) / len(validation_rows) if validation_rows else 0.0
+    )
+    minimum_check(
+        "validation_fit_eligible_fraction",
+        eligible_fraction,
+        min_validation_fit_eligible_fraction,
+    )
+    minimum_check(
+        "posterior_auc",
+        validation_metrics.get("posterior_auc"),
+        min_validation_posterior_auc,
+    )
+    minimum_check(
+        "average_precision",
+        validation_metrics.get("average_precision"),
+        min_validation_average_precision,
+    )
+    minimum_check(
+        "posterior_auc_gain_over_novelty",
+        validation_metrics.get("posterior_auc_gain_over_novelty"),
+        min_validation_posterior_gain_over_novelty,
+    )
+    nonrepeat = dict(validation_metrics.get("nonrepeat") or {})
+    minimum_check(
+        "validation_nonrepeat_examples",
+        nonrepeat.get("n", 0),
+        min_validation_nonrepeat_examples,
+    )
+    minimum_check(
+        "validation_nonrepeat_raw_support_auc",
+        nonrepeat.get("raw_support_auc"),
+        min_validation_nonrepeat_raw_support_auc,
+    )
+    for mode in required_action_modes:
+        minimum_check(
+            f"fit_target_examples_{mode}",
+            (action_counts.get(mode) or {}).get("target_examples", 0),
+            min_fit_target_examples_per_action,
+        )
+    minimum_check(
+        "dataset_question_id_fraction",
+        provenance.get("dataset_question_id_fraction"),
+        min_dataset_question_id_fraction,
+    )
+    minimum_check(
+        "corpus_document_id_fraction",
+        provenance.get("corpus_document_id_fraction"),
+        min_corpus_document_id_fraction,
+    )
+    checks["binding_operating_point"] = {
+        "value": binding_threshold,
+        "required": True,
+        "pass": binding_threshold is not None and np.isfinite(binding_threshold),
+    }
+    failed = [name for name, check in checks.items() if not check["pass"]]
+    return {"pass": not failed, "failed_checks": failed, "checks": checks}
 
 
 def _write_audit(path: str, split_rows: Sequence[Tuple[str, Sequence[MarginalUtilityRow]]]) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         for split, rows in split_rows:
             for row in rows:
-                json.dump({"split": split, **asdict(row)}, handle, ensure_ascii=False)
+                dump_strict_json(
+                    {"split": split, **asdict(row)}, handle, ensure_ascii=False
+                )
                 handle.write("\n")
 
 
@@ -402,9 +713,23 @@ def main() -> None:
     parser.add_argument("--validation_frac", type=float, default=0.2)
     parser.add_argument("--test_frac", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--min_validation_examples", type=int, default=20)
+    parser.add_argument("--min_validation_examples", type=int, default=50)
+    parser.add_argument("--min_validation_fit_eligible_fraction", type=float, default=0.15)
     parser.add_argument("--min_validation_posterior_auc", type=float, default=0.75)
     parser.add_argument("--min_validation_average_precision", type=float, default=0.30)
+    parser.add_argument(
+        "--min_validation_posterior_gain_over_novelty", type=float, default=0.03
+    )
+    parser.add_argument("--min_validation_nonrepeat_examples", type=int, default=20)
+    parser.add_argument(
+        "--min_validation_nonrepeat_raw_support_auc", type=float, default=0.70
+    )
+    parser.add_argument("--min_fit_target_examples_per_action", type=int, default=10)
+    parser.add_argument(
+        "--required_action_modes", default="EXPAND,REWRITE,DECOMPOSE"
+    )
+    parser.add_argument("--min_dataset_question_id_fraction", type=float, default=1.0)
+    parser.add_argument("--min_corpus_document_id_fraction", type=float, default=0.95)
     parser.add_argument("--min_binding_precision", type=float, default=0.80)
     parser.add_argument("--min_binding_predictions", type=int, default=5)
     args = parser.parse_args()
@@ -419,6 +744,13 @@ def main() -> None:
         "span_support_threshold",
         "span_absence_threshold",
         "min_fit_confidence",
+        "min_validation_fit_eligible_fraction",
+        "min_validation_posterior_auc",
+        "min_validation_average_precision",
+        "min_validation_posterior_gain_over_novelty",
+        "min_validation_nonrepeat_raw_support_auc",
+        "min_dataset_question_id_fraction",
+        "min_corpus_document_id_fraction",
     ):
         value = getattr(args, name)
         if not 0.0 <= value <= 1.0:
@@ -426,17 +758,19 @@ def main() -> None:
     if args.span_absence_threshold >= args.span_support_threshold:
         raise ValueError("span_absence_threshold must be below span_support_threshold")
 
+    required_action_modes = tuple(
+        mode.strip() for mode in args.required_action_modes.split(",") if mode.strip()
+    )
+    unknown_action_modes = set(required_action_modes) - {"EXPAND", "REWRITE", "DECOMPOSE"}
+    if unknown_action_modes:
+        raise ValueError(f"unknown required action modes: {sorted(unknown_action_modes)}")
+
     records = _load_jsonl(args.records)
-    if args.annotations:
-        records = _join_annotations(records, _load_jsonl(args.annotations))
-    random.Random(args.seed).shuffle(records)
-    n_test = max(1, int(len(records) * args.test_frac))
-    n_validation = max(1, int(len(records) * args.validation_frac))
-    test_records = records[:n_test]
-    validation_records = records[n_test : n_test + n_validation]
-    fit_records = records[n_test + n_validation :]
-    if not fit_records:
-        raise ValueError("split configuration leaves no fitting records")
+    annotations = _load_jsonl(args.annotations) if args.annotations else []
+    records = _join_annotations(records, annotations)
+    fit_records, validation_records, test_records = _split_by_question_id(
+        records, args.validation_frac, args.test_frac, args.seed
+    )
 
     from belief.obs_extractor import E5Embedder
 
@@ -500,18 +834,33 @@ def main() -> None:
         neighbors=args.k_neighbors,
     )
 
-    gate_reasons = []
-    if len(validation_examples) < args.min_validation_examples:
-        gate_reasons.append("validation_examples")
-    posterior_auc = float(validation_metrics["posterior_auc"])
-    average_precision = float(validation_metrics["average_precision"])
-    if not np.isfinite(posterior_auc) or posterior_auc < args.min_validation_posterior_auc:
-        gate_reasons.append("posterior_auc")
-    if not np.isfinite(average_precision) or average_precision < args.min_validation_average_precision:
-        gate_reasons.append("average_precision")
-    if binding_threshold is None:
-        gate_reasons.append("binding_operating_point")
-    gate_pass = not gate_reasons
+    all_rows = [*fit_rows, *validation_rows, *test_rows]
+    provenance = summarize_provenance(records, all_rows)
+    gate = evaluate_validity_gate(
+        validation_examples,
+        validation_rows,
+        validation_metrics,
+        action_counts,
+        provenance,
+        binding_threshold,
+        required_action_modes,
+        min_validation_examples=args.min_validation_examples,
+        min_validation_fit_eligible_fraction=args.min_validation_fit_eligible_fraction,
+        min_validation_posterior_auc=args.min_validation_posterior_auc,
+        min_validation_average_precision=args.min_validation_average_precision,
+        min_validation_posterior_gain_over_novelty=(
+            args.min_validation_posterior_gain_over_novelty
+        ),
+        min_validation_nonrepeat_examples=args.min_validation_nonrepeat_examples,
+        min_validation_nonrepeat_raw_support_auc=(
+            args.min_validation_nonrepeat_raw_support_auc
+        ),
+        min_fit_target_examples_per_action=args.min_fit_target_examples_per_action,
+        min_dataset_question_id_fraction=args.min_dataset_question_id_fraction,
+        min_corpus_document_id_fraction=args.min_corpus_document_id_fraction,
+    )
+    gate_pass = bool(gate["pass"])
+    gate_reasons = list(gate["failed_checks"])
 
     metrics = {
         "fit": {
@@ -531,9 +880,10 @@ def main() -> None:
             "marginal_utility": summarize_rows(test_rows),
         },
         "target_action_counts": action_counts,
+        "provenance": provenance,
         "binding_threshold_selection": threshold_selection,
         "k_strategy": k_strategy.selection_metrics,
-        "gate": {"pass": gate_pass, "failed_checks": gate_reasons},
+        "gate": gate,
     }
     metadata = {
         "evidence_adapter": adapter.name,
@@ -556,6 +906,33 @@ def main() -> None:
         "seed": args.seed,
         "validation_frac": args.validation_frac,
         "test_frac": args.test_frac,
+        "validity_gate_config": {
+            "min_validation_examples": args.min_validation_examples,
+            "min_validation_fit_eligible_fraction": (
+                args.min_validation_fit_eligible_fraction
+            ),
+            "min_validation_posterior_auc": args.min_validation_posterior_auc,
+            "min_validation_average_precision": args.min_validation_average_precision,
+            "min_validation_posterior_gain_over_novelty": (
+                args.min_validation_posterior_gain_over_novelty
+            ),
+            "min_validation_nonrepeat_examples": (
+                args.min_validation_nonrepeat_examples
+            ),
+            "min_validation_nonrepeat_raw_support_auc": (
+                args.min_validation_nonrepeat_raw_support_auc
+            ),
+            "min_fit_target_examples_per_action": (
+                args.min_fit_target_examples_per_action
+            ),
+            "required_action_modes": list(required_action_modes),
+            "min_dataset_question_id_fraction": (
+                args.min_dataset_question_id_fraction
+            ),
+            "min_corpus_document_id_fraction": (
+                args.min_corpus_document_id_fraction
+            ),
+        },
     }
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -566,10 +943,10 @@ def main() -> None:
         (("fit", fit_rows), ("validation", validation_rows), ("test", test_rows)),
     )
     with open(metrics_path, "w", encoding="utf-8") as handle:
-        json.dump({"metadata": metadata, "metrics": metrics}, handle, indent=2)
+        dump_strict_json({"metadata": metadata, "metrics": metrics}, handle, indent=2)
 
     print("=== ACEC calibration v5: conditional marginal evidence utility ===")
-    print(json.dumps(metrics, indent=2))
+    print(json.dumps(strict_json_value(metrics), indent=2, allow_nan=False))
     print(f"Wrote marginal audit {audit_path}")
     print(f"Wrote metrics {metrics_path}")
     if not gate_pass:

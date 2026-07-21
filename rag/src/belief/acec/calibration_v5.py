@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, IO, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -24,6 +24,42 @@ from .offline_fit import auc_score
 ARTIFACT_TYPE = "acec_calibration"
 ARTIFACT_VERSION = 5
 MODEL_KIND = "monotonic_platt_marginal_support_novelty_v1"
+
+
+def strict_json_value(value: Any) -> Any:
+    """Return a JSON-standard representation with no NaN/Infinity values.
+
+    Python's ``json`` module emits non-standard ``NaN`` tokens by default.
+    Calibration metrics legitimately contain undefined values when a split has
+    one class or K is constant, so persist those values as JSON ``null`` rather
+    than producing an artifact that strict consumers cannot parse.
+    """
+
+    if isinstance(value, dict):
+        return {str(key): strict_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [strict_json_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return [strict_json_value(item) for item in value.tolist()]
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.floating):
+        value = float(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def dump_strict_json(value: Any, handle: IO[str], **kwargs: Any) -> None:
+    """Serialize ``value`` as standards-compliant JSON."""
+
+    json.dump(strict_json_value(value), handle, allow_nan=False, **kwargs)
+
+
+def _reject_nonfinite_json(token: str) -> None:
+    raise ValueError(f"non-standard numeric token in ACEC artifact: {token}")
 
 
 def _clip_probability(value: float) -> float:
@@ -344,16 +380,29 @@ def posterior_quality_metrics_v5(
             "n": 0,
             "gain_rate": float("nan"),
             "raw_support_auc": float("nan"),
+            "novelty_only_auc": float("nan"),
             "support_novelty_auc": float("nan"),
             "posterior_auc": float("nan"),
+            "posterior_auc_gain_over_novelty": float("nan"),
             "average_precision": float("nan"),
+            "novelty_only_average_precision": float("nan"),
             "brier": float("nan"),
             "ece": float("nan"),
+            "nonrepeat": {
+                "n": 0,
+                "gain_rate": float("nan"),
+                "raw_support_auc": float("nan"),
+                "posterior_auc": float("nan"),
+                "average_precision": float("nan"),
+            },
         }
     labels = np.asarray([float(example.is_gain) for example in examples], dtype=np.float64)
     support = np.asarray([example.support_score for example in examples], dtype=np.float64)
     novelty = np.asarray([example.novelty_score for example in examples], dtype=np.float64)
     posterior = predict_examples_v5(examples, model, gain_rates)
+    label_bools = [bool(value) for value in labels]
+    novelty_auc = auc_score(label_bools, list(novelty))
+    posterior_auc = auc_score(label_bools, list(posterior))
     ece = 0.0
     edges = np.linspace(0.0, 1.0, 11)
     for index in range(10):
@@ -364,14 +413,41 @@ def posterior_quality_metrics_v5(
     metrics: Dict[str, Any] = {
         "n": len(examples),
         "gain_rate": float(labels.mean()),
-        "raw_support_auc": auc_score([bool(value) for value in labels], list(support)),
+        "raw_support_auc": auc_score(label_bools, list(support)),
+        "novelty_only_auc": novelty_auc,
         "support_novelty_auc": auc_score(
-            [bool(value) for value in labels], list(support * novelty)
+            label_bools, list(support * novelty)
         ),
-        "posterior_auc": auc_score([bool(value) for value in labels], list(posterior)),
+        "posterior_auc": posterior_auc,
+        "posterior_auc_gain_over_novelty": (
+            float(posterior_auc - novelty_auc)
+            if np.isfinite(posterior_auc) and np.isfinite(novelty_auc)
+            else float("nan")
+        ),
         "average_precision": _average_precision(labels, posterior),
+        "novelty_only_average_precision": _average_precision(labels, novelty),
         "brier": float(np.mean((posterior - labels) ** 2)),
         "ece": float(ece),
+    }
+    # Exact repeats are often deterministic zero-gain cases.  Report the
+    # semantic discrimination on non-repeated documents separately so a model
+    # cannot pass the validity gate merely by learning the novelty shortcut.
+    nonrepeat_mask = novelty > 1e-6
+    nonrepeat_labels = labels[nonrepeat_mask]
+    nonrepeat_support = support[nonrepeat_mask]
+    nonrepeat_posterior = posterior[nonrepeat_mask]
+    metrics["nonrepeat"] = {
+        "n": int(nonrepeat_mask.sum()),
+        "gain_rate": (
+            float(nonrepeat_labels.mean()) if len(nonrepeat_labels) else float("nan")
+        ),
+        "raw_support_auc": auc_score(
+            [bool(value) for value in nonrepeat_labels], list(nonrepeat_support)
+        ),
+        "posterior_auc": auc_score(
+            [bool(value) for value in nonrepeat_labels], list(nonrepeat_posterior)
+        ),
+        "average_precision": _average_precision(nonrepeat_labels, nonrepeat_posterior),
     }
     if threshold is not None:
         metrics["operating_point"] = operating_point_metrics(examples, posterior, threshold)
@@ -399,12 +475,12 @@ def save_calibration_artifact_v5(
         "metrics": metrics,
     }
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+        dump_strict_json(payload, handle, indent=2)
 
 
 def load_calibration_artifact_v5(path: str) -> CalibrationArtifactV5:
     with open(path, encoding="utf-8") as handle:
-        payload = json.load(handle)
+        payload = json.load(handle, parse_constant=_reject_nonfinite_json)
     if payload.get("artifact_type") != ARTIFACT_TYPE:
         raise ValueError(f"not an ACEC calibration artifact: {path}")
     if payload.get("artifact_version") != ARTIFACT_VERSION:
@@ -449,10 +525,12 @@ __all__ = [
     "MarginalUtilityObservationModel",
     "MonotonicMarginalCalibrator",
     "choose_binding_threshold_v5",
+    "dump_strict_json",
     "fit_observation_model_v5",
     "load_calibration_artifact_v5",
     "operating_point_metrics",
     "posterior_quality_metrics_v5",
     "predict_examples_v5",
     "save_calibration_artifact_v5",
+    "strict_json_value",
 ]

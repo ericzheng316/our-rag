@@ -53,7 +53,13 @@ class CanonicalEvidenceAdapterV5:
             )
         question_id = payload.get(
             "question_id",
-            record.get("id", record.get("_id", record.get("problem", ""))),
+            record.get(
+                "_canonical_question_id",
+                annotation.get(
+                    "id",
+                    annotation.get("_id", record.get("id", record.get("_id", record.get("problem", "")))),
+                ),
+            ),
         )
         return EvidenceSpecification(
             question_id=str(question_id),

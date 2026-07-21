@@ -101,7 +101,9 @@ def select_k_strategy_v5(
         "validation_examples": len(validation_examples),
         "fit_k_counts": {str(key): value for key, value in sorted(counts.items())},
         "modal_fixed_k": modal_k,
-        "fixed_validation_accuracy": baseline_accuracy,
+        "fixed_validation_accuracy": (
+            baseline_accuracy if np.isfinite(baseline_accuracy) else None
+        ),
         "predictor_validation_accuracy": None,
         "predictor_accuracy_gain": None,
         "selection_reason": None,
@@ -133,8 +135,12 @@ def select_k_strategy_v5(
         if np.isfinite(predictor_accuracy) and np.isfinite(baseline_accuracy)
         else float("nan")
     )
-    metrics["predictor_validation_accuracy"] = predictor_accuracy
-    metrics["predictor_accuracy_gain"] = accuracy_gain
+    metrics["predictor_validation_accuracy"] = (
+        predictor_accuracy if np.isfinite(predictor_accuracy) else None
+    )
+    metrics["predictor_accuracy_gain"] = (
+        accuracy_gain if np.isfinite(accuracy_gain) else None
+    )
 
     if requested_mode == "predictor":
         if predictor is None:

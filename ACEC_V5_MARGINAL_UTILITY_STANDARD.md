@@ -94,6 +94,12 @@ An artifact is written only when the validation gates pass:
 
 - sufficient assessable examples;
 - posterior ROC-AUC and average precision minima;
+- a minimum assessable-row fraction, so abstention cannot leave only an easy
+  endpoint subset;
+- a novelty-only baseline and a non-repeat semantic-support audit, so exact
+  duplicate detection cannot masquerade as evidence understanding;
+- minimum target examples for every action mode claimed by the artifact;
+- stable dataset question ids and corpus/document ids at configured coverage;
 - a binding threshold chosen on validation that reaches the required precision
   with a minimum number of predicted gains.
 
@@ -107,6 +113,17 @@ the same support and novelty features from the question, generated slots,
 retrieved documents, and prior evidence history. Artifact metadata records the
 adapter, utility provider, model versions, thresholds, split seed, and K
 strategy.
+
+Legacy logs without native ids may be joined to a uniquely matching dataset
+annotation, but the join mode is recorded. Closed candidate-pool paragraphs
+receive stable question-scoped context ids; unmatched text receives only a
+content-hash fallback and does not satisfy the corpus-id provenance gate.
+Repeated trajectories for the same question id are always assigned to the same
+split.
+
+Artifacts and audits are strict JSON. Undefined metrics such as predictor
+accuracy on a constant-K dataset are serialized as `null`, never `NaN` or
+infinity.
 
 SFT, calibration, GRPO, and final evaluation questions must be question-id
 disjoint. Replaying a pretrained model's old HotpotQA knowledge is acceptable
