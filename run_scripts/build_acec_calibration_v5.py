@@ -498,6 +498,15 @@ def _join_annotations(
             elif native_id:
                 combined["_canonical_question_id"] = native_id
                 combined["_question_id_source"] = "native_record_id"
+            else:
+                annotation_question = _question(annotation)
+                digest = hashlib.sha256(annotation_question.encode("utf-8")).hexdigest()
+                combined["_canonical_question_id"] = (
+                    f"annotation_question_sha256:{digest}"
+                )
+                combined["_question_id_source"] = (
+                    "annotation_question_sha256_join"
+                )
         elif native_id:
             combined["_canonical_question_id"] = native_id
             combined["_question_id_source"] = "native_record_id"
@@ -554,7 +563,12 @@ def summarize_provenance(
     question_sources = Counter(_question_id_source(record) for record in records)
     join_modes = Counter(str(record.get("_annotation_join_mode") or "none") for record in records)
     document_sources = Counter(row.selected_document_id_source for row in rows)
-    dataset_id_sources = {"native_record_id", "annotation_id_join", "annotation_question_join"}
+    dataset_id_sources = {
+        "native_record_id",
+        "annotation_id_join",
+        "annotation_question_join",
+        "annotation_question_sha256_join",
+    }
     corpus_id_sources = {"native", "annotation_context"}
     return {
         "records": len(records),

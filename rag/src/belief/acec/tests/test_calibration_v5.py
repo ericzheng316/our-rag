@@ -316,6 +316,18 @@ class CalibrationV5Test(unittest.TestCase):
         self.assertEqual(enriched["document_id"], "hotpot-q1:context:0")
         self.assertEqual(enriched["document_id_source"], "annotation_context")
 
+        hash_joined = builder._join_annotations(
+            [{"problem": "Who is Bob?"}],
+            [{"question": "Who is Bob?", "context": {"title": [], "sentences": []}}],
+        )[0]
+        self.assertTrue(
+            builder._record_id(hash_joined).startswith("annotation_question_sha256:")
+        )
+        self.assertEqual(
+            hash_joined["_question_id_source"],
+            "annotation_question_sha256_join",
+        )
+
         extra = builder._join_annotations(
             [{"id": f"q{index}", "problem": f"question {index}"} for index in range(8)],
             [],

@@ -115,7 +115,9 @@ adapter, utility provider, model versions, thresholds, split seed, and K
 strategy.
 
 Legacy logs without native ids may be joined to a uniquely matching dataset
-annotation, but the join mode is recorded. Closed candidate-pool paragraphs
+annotation, but the join mode is recorded. If the annotation export also lacks
+its native id, a stable SHA-256 identity is derived from its unique question
+text and marked as derived rather than native. Closed candidate-pool paragraphs
 receive stable question-scoped context ids; unmatched text receives only a
 content-hash fallback and does not satisfy the corpus-id provenance gate.
 Repeated trajectories for the same question id are always assigned to the same
