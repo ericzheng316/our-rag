@@ -11,6 +11,7 @@ import numpy as np
 from belief.acec.calibration_v5 import (
     ARTIFACT_VERSION,
     MarginalUtilityExample,
+    MonotonicMarginalCalibrator,
     choose_binding_threshold_v5,
     fit_observation_model_v5,
     load_calibration_artifact_v5,
@@ -276,6 +277,44 @@ class CalibrationV5Test(unittest.TestCase):
             handle.flush()
             with self.assertRaises(ValueError):
                 load_calibration_artifact_v5(handle.name)
+
+    def test_monotonic_calibrator_reaches_constrained_optimum(self):
+        examples = []
+        for index in range(80):
+            support = 0.05 + 0.90 * ((index * 17) % 79) / 78
+            novelty = 0.10 + 0.85 * ((index * 29) % 77) / 76
+            is_gain = support * novelty > 0.30
+            examples.append(
+                MarginalUtilityExample(
+                    "DECOMPOSE", "tgt", False, support, novelty, is_gain, float(is_gain)
+                )
+            )
+        calibrator = MonotonicMarginalCalibrator.fit(examples, max_iterations=200)
+        self.assertGreaterEqual(calibrator.support_slope, 0.0)
+        self.assertGreaterEqual(calibrator.novelty_slope, 0.0)
+
+        y = np.asarray([float(example.is_gain) for example in examples])
+        support = np.asarray(
+            [np.clip(np.log(example.support_score / (1.0 - example.support_score)), -12, 12)
+             for example in examples]
+        )
+        novelty = np.asarray(
+            [np.clip(np.log(example.novelty_score / (1.0 - example.novelty_score)), -12, 12)
+             for example in examples]
+        )
+        design = np.column_stack((np.ones_like(support), support, novelty))
+        beta = np.asarray(
+            [calibrator.intercept, calibrator.support_slope, calibrator.novelty_slope]
+        )
+        probabilities = 1.0 / (1.0 + np.exp(-np.clip(design @ beta, -30, 30)))
+        gradient = design.T @ (probabilities - y)
+        gradient[1:] += 1e-2 * beta[1:]
+        self.assertLess(abs(float(gradient[0])), 1e-4)
+        for coefficient, component in zip(beta[1:], gradient[1:]):
+            if coefficient > 1e-8:
+                self.assertLess(abs(float(component)), 1e-4)
+            else:
+                self.assertGreaterEqual(float(component), -1e-4)
 
     def test_quality_metrics_expose_novelty_shortcut_and_nonrepeat_subset(self):
         examples = [

@@ -118,25 +118,68 @@ class MonotonicMarginalCalibrator:
         design = np.column_stack(
             (np.ones_like(support), np.clip(support, -12.0, 12.0), np.clip(novelty, -12.0, 12.0))
         )
-        beta = np.asarray([_logit(base_rate), 1.0, 1.0], dtype=np.float64)
+        beta = np.asarray([_logit(base_rate), 0.0, 0.0], dtype=np.float64)
+
+        def objective(parameters: np.ndarray) -> float:
+            logits = design @ parameters
+            data_loss = np.logaddexp(0.0, logits).sum() - float(y @ logits)
+            penalty = 0.5 * l2 * float(parameters[1:] @ parameters[1:])
+            return float(data_loss + penalty)
+
         for _ in range(max_iterations):
-            eta = np.clip(design @ beta, -30.0, 30.0)
-            probabilities = 1.0 / (1.0 + np.exp(-eta))
+            eta = design @ beta
+            clipped_eta = np.clip(eta, -30.0, 30.0)
+            probabilities = 1.0 / (1.0 + np.exp(-clipped_eta))
             weights = np.maximum(probabilities * (1.0 - probabilities), 1e-6)
-            gradient = design.T @ (y - probabilities)
-            gradient[1:] -= l2 * beta[1:]
+            gradient = design.T @ (probabilities - y)
+            gradient[1:] += l2 * beta[1:]
             information = design.T @ (weights[:, None] * design)
             information[1, 1] += l2
             information[2, 2] += l2
             information += np.eye(3) * 1e-8
             try:
-                step = np.linalg.solve(information, gradient)
+                direction = np.linalg.solve(information, gradient)
             except np.linalg.LinAlgError:
                 break
-            candidate = beta + np.clip(step, -5.0, 5.0)
-            candidate[1:] = np.maximum(candidate[1:], 0.0)
-            if float(np.max(np.abs(candidate - beta))) < 1e-8:
-                beta = candidate
+
+            # A projected Newton step is not guaranteed to decrease the
+            # constrained objective after a coefficient hits zero.  The old
+            # implementation accepted the full clipped step unconditionally;
+            # on near-separated novelty data it oscillated until
+            # ``max_iterations`` and happened to stop at a saturated slope.
+            # Backtracking makes each accepted step improve the actual
+            # penalized likelihood while preserving monotonic coefficients.
+            current_objective = objective(beta)
+            candidate = beta.copy()
+            step_scale = 1.0
+            accepted = False
+            for _ in range(30):
+                proposed = beta - step_scale * direction
+                proposed[1:] = np.maximum(proposed[1:], 0.0)
+                if objective(proposed) < current_objective - 1e-12:
+                    candidate = proposed
+                    accepted = True
+                    break
+                step_scale *= 0.5
+            if not accepted:
+                # At a constrained optimum the projected update is unchanged.
+                # Otherwise a conservative projected-gradient fallback avoids
+                # abandoning an improvable point because Newton crossed a
+                # boundary in an unhelpful direction.
+                step_scale = 1.0 / max(float(np.max(np.diag(information))), 1.0)
+                for _ in range(30):
+                    proposed = beta - step_scale * gradient
+                    proposed[1:] = np.maximum(proposed[1:], 0.0)
+                    if objective(proposed) < current_objective - 1e-12:
+                        candidate = proposed
+                        accepted = True
+                        break
+                    step_scale *= 0.5
+            if not accepted:
+                break
+            delta = float(np.max(np.abs(candidate - beta)))
+            beta = candidate
+            if delta < 1e-8:
                 break
             beta = candidate
         if not np.all(np.isfinite(beta)):
