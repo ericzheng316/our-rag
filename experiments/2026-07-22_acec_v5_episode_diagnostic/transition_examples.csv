@@ -1,0 +1,42 @@
+id,question_type,question,golden_answers,pattern_50_75_100,step50_prediction,step75_prediction,step100_prediction,step50_processed_f1,step75_processed_f1,step100_processed_f1
+dev_2266,what,What South Korean girl group formed by S.M. Entertainment recorded the Korean language song Lion Heart?,Girls' Generation,101,Girls' Generation.,Kara.,Girls' Generation.,1.0,0.0,1.0
+dev_57,who,who is younger Keith Bostic or Jerry Glanville ?,Keith Bostic,101,Keith Bostic.,Jerry Glanville.,Keith Bostic.,1.0,0.0,1.0
+dev_6073,what,What is the name of this French former footballer whom football fans refer the football player Wilfred Bamnjo to as?,Makélélé,010,Claude Makélélé.,Marc-Étienne Kimpé Makélélé.,Thierry Henry.,0.6666666666666666,1.0,0.0
+dev_5200,other,During what race leading up to the 1994 Monaco Grand Prix was Roland Ratzenberger killed?,San Marino Grand Prix,001,1994 San Marino Grand Prix.,1994 San Marino Grand Prix.,San Marino Grand Prix.,0.888888888888889,0.888888888888889,1.0
+dev_6144,other,"In which language is the notable song by Suresh Peters from ""Gentleman ""?",Tamil,010,Telugu.,Tamil.,Telugu.,0.0,1.0,0.0
+dev_3197,other,In what state is the manufacturer of Bisquick headquartered?,Minnesota,110,Minnesota.,Minnesota.,Michigan.,1.0,1.0,0.0
+dev_4572,when/year,When was the New Orleans Pelicans player featured on the NBA 2K16 cover first drafted?,2012,100,2012.,"June 28, 2012.","June 28, 2012.",1.0,0.5,0.5
+dev_4783,other,Alhambra and Tsuro are both examples of what type of game?,tile-based board game,010,board game.,tile-based board game.,board game.,0.8,1.0,0.8
+dev_2177,what,"What abbey, founded in 598, was Clarembald a monk at?",St Augustine's Abbey,100,Saint Augustine's Abbey.,Saint Gall Abbey.,Saint Gall Abbey.,1.0,0.6666666666666666,0.6666666666666666
+dev_2735,other,Both José Aponte de la Torre Airport and Boulder City Municipal Airport are classified as what type of airport?,public use airport,101,public use airport.,public use.,public use airport.,1.0,0.8,1.0
+dev_4114,when/year,"In what year was the narrator of ""Blackadder's Christmas Carol"" born?",1959,101,1959.,1957.,1959.,1.0,0.0,1.0
+dev_5496,other,"Charles Hurt is currently the opinion editor of ""The Washington Times"", Fox News contributor, Breitbart News contributor, and editor of which politically conservative American news aggregation website?",Drudge Report,100,Drudge Report.,Breitbart News.,Breitbart News.,1.0,0.0,0.0
+dev_5834,what,What property do the films Sweet Crude and Tunisian Victory share?,documentary,110,documentary.,documentary.,documentary films.,1.0,1.0,0.6666666666666666
+dev_2564,other,AVN Media Network has as part of their business what convention and trade show that takes place every January in Las Vegas Nevada?,AVN Adult Entertainment Expo,101,AVN Adult Entertainment Expo.,Adult Entertainment Expo (AEE).,AVN Adult Entertainment Expo.,1.0,0.8571428571428571,1.0
+dev_4727,which,"Which breed of dog was first recognized by their country's official kennel club, the American Hairless Terrier or the Saint-Usuge Spaniel? ",The American Hairless Terrier,100,American Hairless Terrier.,Saint-Usuge Spaniel.,Saint-Usuge Spaniel.,1.0,0.0,0.0
+dev_144,other,The movies Queen of Blood and Battle Beyond the Sun both contained scenes from what 1959 Soviet feature?,Nebo Zovyot,100,Nebo Zovyot.,Mechty Navstrechu.,Mechte Navstrechu.,1.0,0.0,0.0
+dev_6198,who,Who hosted the ITV show Celebrities Under Pressure and All Star Family Fortunes?,Vernon Kay,110,Vernon Kay.,Vernon Kay.,Melanie Sykes/Vernon Kay and Noel Edmonds.,1.0,1.0,0.5714285714285715
+dev_1471,other,"Cordyline ruba grows from Bundaberg, Queensland to which northeastern city in New South Whales, Australia?",Lismore,011,Sydney.,Lismore.,Lismore.,0.0,1.0,1.0
+dev_6336,what,What was another title published by the owner of the pseudonym Frank Talk?,I Write What I Like,110,I Write What I Like.,I Write What I Like.,Black Consciousness.,1.0,1.0,0.0
+dev_6993,yes/no,Are Lycoris and Ammi both native to southern Asia?,yes,010,No.,Yes.,No.,0.0,1.0,0.0
+dev_4410,which,"Which long-established US university is older: University of California, Berkeley or Syracuse University?","University of California, Berkeley",001,Syracuse University.,Syracuse University.,"University of California, Berkeley.",0.3333333333333333,0.3333333333333333,1.0
+dev_6040,which,"Which of the following works was completed first, Something Wicked This Way Comes or The Wind in the Willows?",The Wind in the Willows,011,Something Wicked This Way Comes.,The Wind in the Willows.,The Wind in the Willows.,0.0,1.0,1.0
+dev_890,other,"In which genus number of species are more, Lavatera or Oplismenus?",Oplismenus,101,Oplismenus.,Lavatera.,Oplismenus.,1.0,0.0,1.0
+dev_2175,what,What Andy Williams' album did a song written by Charles Wesley appear on?,The Andy Williams Christmas Album,100,The Andy Williams Christmas Album.,Deck the Halls.,Andy Williams' Greatest Hits.,1.0,0.0,0.5
+dev_715,other,Into Dust is a song by the alternative rock band formed in which city?,"Santa Monica, California",011,Santa Monica.,Santa Monica.,Santa Monica.,0.8,1.0,1.0
+dev_5365,who,"Who was born first, Lecrae Devaughn Moore or Gawvi?",Lecrae Devaughn Moore,110,Lecrae Devaughn Moore.,Lecrae Devaughn Moore.,Gawvi.,1.0,1.0,0.0
+dev_3570,what,What is the fourth most populous urban area in the Republic of Ireland and has the housing estate Corrib Park?,Galway,101,Galway.,Cork.,Galway.,1.0,0.0,1.0
+dev_3350,what,"What concert tour headlined by Coal Chamber in 1999 was named after the popular hit song by the Puerto Rican singer Ricky Martin, spanish for ""the crazy life""?",Livin' la Vida Loca,100,Livin' la Vida Loca.,Livin' la Vida Loca Tour.,Livin' la Vida Loca Tour.,1.0,0.888888888888889,0.888888888888889
+dev_2020,what,"What mine was operated by Royal Oak Mines at at earlier date, Kemess Mine or Colomac Mine?",The Colomac Mine,001,Kemess Mine.,Kemess Mine.,Colomac Mine.,0.5,0.5,1.0
+dev_2481,yes/no,"Were both the One, Inc. v. Olesen and  Erie Railroad Co. v. Tompkins cases ones that included a ruling by the United States Supreme Court?",yes,110,Yes.,Yes.,No.,1.0,1.0,0.0
+dev_489,numeric,How many Senate seats will be contested during the midterm elections that Nancy Soderberg has filed to run for Congress in?,33,011,1.,33.,33.,0.0,1.0,1.0
+dev_3156,other,The hip hop group Strange Fruit Project relates its name to what song by a famous female jazz musician and singer known for her vocal delivery and improvisational skills?,"""Strange Fruit""",101,Strange Fruit.,Strange Fruit by Billie Holiday.,Strange Fruit.,1.0,0.5714285714285715,1.0
+dev_2155,what,What association did the woman whose museum is located in the Bolling–Gatewood House help found?,NAACP,100,National Association for the Advancement of Colored People (NAACP).,National Association of Colored Women's Clubs.,National Association of Colored Women's Clubs.,1.0,0.0,0.0
+dev_6807,which,"Which magazine was first published earlier, The Chronicle of Philanthropy or Skeptic?",The Chronicle of Philanthropy,110,The Chronicle of Philanthropy.,The Chronicle of Philanthropy.,Skeptic.,1.0,1.0,0.0
+dev_5449,which,"Which amusement park at Coney Island, Brooklyn, New York City,  without being the grandest, was the island's longest lasting?",Steeplechase Park,101,Steeplechase Park.,Sea Lion Park.,Steeplechase Park.,1.0,0.4,1.0
+dev_5635,which,"Which was released first, Kolejka or Ghettopoly?",Ghettopoly,011,Kolejka.,Ghettopoly.,Ghettopoly.,0.0,1.0,1.0
+dev_2338,who,"Who has held more positions in the film industry, Donald Cammell or Justin David Swibel?",Justin David Swibel,110,Justin David Swibel.,Justin David Swibel.,Donald Cammell.,1.0,1.0,0.0
+dev_4086,other,"Christopher ""Chris"" Fairbank provided voice talent for which 2006 British-American computer-animated action-adventure comedy film directed by David Bowers and Sam Fell?",Flushed Away,101,Flushed Away.,Ratigan.,Flushed Away.,1.0,0.0,1.0
+dev_1549,what,What is the nationality of the wrestler who sang on A Jingle with Jillian?,American,100,American.,Canadian.,Canadian.,1.0,0.0,0.0
+dev_4120,other,Sporobolus and Zea are in the same what?,family,011,grass family (Poaceae).,family.,family.,0.6666666666666666,1.0,1.0
+dev_4176,other,In which year did Baek Bong-ki appear in the South Korean drama film set in a high school?,2004,101,2004.,2016.,2004.,1.0,0.0,1.0
