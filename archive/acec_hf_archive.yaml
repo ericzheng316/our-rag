@@ -1,0 +1,93 @@
+schema_version: 1
+
+archive:
+  id: acec-experiments-2026-07
+  description: Complete ACEC experiment record through the v6.4 implementation phase.
+  hub_repo_id: Eric316/acec-experiments
+  hub_repo_type: dataset
+  visibility: private
+  integrity_algorithm: sha256
+
+layout:
+  runs: experiments/logs
+  setup_logs: experiments/setup_logs
+  experiment_summaries: experiments/repo_summaries
+  prepared_hotpotqa: datasets/hotpotqa
+  historical_git_bundles: project/historical_bundles
+  source_bundle: project/our-rag.bundle
+  current_worktree_snapshot: project/current_local_worktree.tar.gz
+  environment: environment
+  machine_record: system
+  integrity_manifest: manifest/files.sha256
+
+included_sources:
+  - source: /root/data/logs
+    destination: experiments/logs
+    policy: include_every_file
+    notes: Includes completed, failed, smoke, calibration, evaluation, checkpoint, and _lora_scratch files.
+  - source: /root/data/setup_logs
+    destination: experiments/setup_logs
+    policy: include_every_file
+  - source: /root/data/our-rag/experiments
+    destination: experiments/repo_summaries
+    policy: include_every_file
+  - source: /root/data/flashrag_datasets/hotpotqa
+    destination: datasets/hotpotqa/flashrag
+    policy: include_every_file
+    notes: Exact locally prepared train/dev inputs used by the experiments.
+  - source: /root/data/datasets/hotpotqa/distractor_jsonl
+    destination: datasets/hotpotqa/distractor_jsonl
+    policy: include_every_file
+  - source: /root/data/acec-*.bundle
+    destination: project/historical_bundles
+    policy: include_matching_files
+  - source: /root/data/bootstrap.sh
+    destination: setup/bootstrap.sh
+    policy: include_if_present
+  - source: /root/data/_flashrag_dl/run_downloads.sh
+    destination: setup/run_downloads.sh
+    policy: include_if_present
+  - source: /root/data/src/faiss-v1.14.3.tar.gz
+    destination: setup/faiss-v1.14.3.tar.gz
+    policy: include_if_present
+  - source: current local Codex workspace
+    destination: project/current_local_worktree.tar.gz
+    policy: include_tracked_and_untracked_nonignored_files
+    notes: Exact source overlay containing the uncommitted v6.3/v6.4 implementation.
+
+excluded_reproducible_assets:
+  - local_path: /root/data/indices/e5_Flat/e5_Flat.index
+    reason: Public prebuilt artifact; 64,559,075,373 bytes.
+    primary_source: https://www.modelscope.cn/datasets/hhjinjiajie/FlashRAG_Dataset/resolve/master/retrieval_corpus/wiki18_100w_e5_index.zip
+    fallback_source: https://huggingface.co/datasets/PeterJinGo/wiki-18-e5-index
+  - local_path: /root/data/flashrag_datasets/retrieval-corpus/wiki18_100w.jsonl
+    reason: Public retrieval corpus.
+    primary_source: https://www.modelscope.cn/datasets/hhjinjiajie/FlashRAG_Dataset/resolve/master/retrieval_corpus/wiki18_100w.jsonl
+  - local_path: /root/data/models/R3-RAG-Qwen
+    reason: Public upstream base model.
+    hub_repo_id: Yuan-Li-FNLP/R3-RAG-Qwen
+  - local_path: /root/data/models/e5-base-v2
+    reason: Public upstream retriever model.
+    hub_repo_id: intfloat/e5-base-v2
+  - local_path: /root/data/hf_cache
+    reason: Reproducible Hugging Face cache, including cross-encoder/nli-deberta-v3-base.
+  - local_path: /root/data/our-rag/rag/.venv
+    reason: Machine-specific virtual environment; package locks are archived instead.
+  - local_path: /root/data/build
+    reason: Machine-specific FAISS build tree; source tarball and build logs are archived.
+  - local_path: /root/data/pip_cache
+    reason: Reproducible package cache.
+
+restore:
+  script: run_scripts/45_restore_hf_archive.sh
+  modes:
+    experiments_only: Restore code, logs, checkpoints, prepared evaluation data, and environment records.
+    full: Also download the public base models, retrieval corpus, NLI model, and prebuilt FAISS index.
+
+security:
+  credentials_in_archive: forbidden
+  token_delivery: environment_only
+  pre_upload_scan_patterns:
+    - Hugging Face user token
+    - OpenAI-style token
+    - AIPing QC token

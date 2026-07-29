@@ -42,10 +42,11 @@ Three findings, in descending order of certainty:
    correct→wrong→correct across checkpoints. This is proxy/generalization
    mismatch — a soft reward-hacking signature.
 
-Mechanism red flag: **78.7% of all retrieval actions are DECOMPOSE**
-(`runtime_v5.py:205` spawns a new slot on every DECOMPOSE). The
+Mechanism red flag: **78.7% of all retrieval actions are DECOMPOSE**, so the
 "action-conditioned" observation model — the core novelty vs a pooled model —
-is barely exercised for EXPAND (6.3%) and REWRITE (15%).
+is barely exercised for EXPAND (6.3%) and REWRITE (15%). This is largely a
+slot-initialization artifact, not a HotpotQA property or a real action signal;
+see E5 for the code-confirmed mechanism and the fix.
 
 Two structural gaps confirmed absent from the entire repo (grep over
 `experiments/`, `run_scripts/`, `rag/train/`):
@@ -96,7 +97,8 @@ Two amplifiers:
 
 Ordered by leverage against the Section 2 diagnosis. E1 and E2 are the only
 changes that can plausibly move the **answer** axis; E3 is a curriculum move; E4
-is the honest fallback.
+is the honest fallback. E5 targets a *separate* failure — the DECOMPOSE
+monoculture and coverage circularity — and is complementary to E1.
 
 ### E1 — Coverage measures answerability gain, not topical support (highest leverage)
 
@@ -147,6 +149,54 @@ stopping signal that sparse or gold-label rewards cannot provide," and evolve th
 VOI stop / coverage-guarded stopping to widen the −18% retrieval margin while
 holding recall. This is the highest-probability real contribution and does not
 require beating anyone on EM.
+
+### E5 — Pre-seed slots to de-circularize coverage and remove the DECOMPOSE artifact
+
+Targets a different failure than E1–E4: the 78.7% DECOMPOSE monoculture and the
+fact that coverage is currently measured against the model's own queries rather
+than the question's requirements.
+
+**Diagnosis (code-confirmed, not a HotpotQA property).** On `reset()` the slot
+set starts empty (`coverage_belief.py:80`). The action labeler returns DECOMPOSE
+unconditionally when there are no slot hypotheses to match against
+(`action_labeler.py:72-74`). Therefore **the first retrieval turn of every
+trajectory is a forced DECOMPOSE, independent of the dataset or the query.** With
+~1.44 retrieval turns per trajectory (18,391 retrieval actions / 12,765
+trajectories in the v5 100-episode run), that forced first turn alone is ~1/1.44
+≈ 69% of all retrieval actions — i.e. it accounts for almost the entire 78.7%.
+HotpotQA's shallow 2-hop structure (short trajectories) *amplifies* this by
+keeping the denominator small; it does not *cause* it. `tau_new` is only a minor
+amplifier, and only for the ~10% of DECOMPOSEs that occur on the second turn or
+later.
+
+**Why it matters.** Two things, neither of which is "the policy behaves badly"
+(it doesn't — coverage tracking still works):
+1. The "action-conditioned" identifiability claim (vs a pooled model, ablation a)
+   is barely exercisable on HotpotQA, because most of the DECOMPOSE mass is a
+   structurally forced action carrying no choice information.
+2. Coverage is **circular**: slots are spawned *from the model's own queries*, so
+   the belief's notion of "what needs covering" is defined by what the model
+   already chose to retrieve. It cannot penalize the model for never querying a
+   required slot. This deviates from the v5 standard's own definition
+   (Section 3: "a requirement is one minimal semantic piece needed to answer the
+   question").
+
+**Fix.** At `reset()`, pre-seed K slot hypotheses from a question decomposition
+(a runtime decomposer prompt, no gold), instead of reactive spawning. This makes
+(a) the first turn a genuine action choice (there are slots to match against),
+and (b) coverage measured against the *question's* requirements rather than the
+model's queries — the same direction as E1 (reactive/topical → principled/
+answer-oriented). Its primary value is de-circularizing the coverage target, not
+rescuing the action-conditioning claim.
+
+**Scoping / what not to do.** Do not tune `tau_new` as the fix — it touches only
+the ~10% residual, not the ~69% forced first turn. Do not spend effort making
+EXPAND/REWRITE demonstrable on HotpotQA; if the action-conditioning claim is kept
+at all, demonstrate it on a deeper multi-hop dataset (MuSiQue) where trajectories
+are long enough to exercise it. Regardless of whether the pre-seed fix lands, the
+cheap honesty fix is to **report the action distribution excluding the
+structurally-forced first turn**, so diagnostics do not overclaim an action
+signal that is an artifact.
 
 ---
 

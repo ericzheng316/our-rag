@@ -13,6 +13,26 @@ Your prompt asks me to push back before formalizing. Four pushbacks, each ground
 
 **(C2) Coverage as a *policy input* alone is empirically dead — the reward channel must be primary.** Every inference-time belief intervention you ran on the frozen policy was ≤ ±0.3pt (belief vector, prefix injection, thresholds, budgets), because R3-RAG-Qwen already stops implicitly (mean 1.62 turns; 8.5% answer at step 0). The measurable headroom is elsewhere: retrieval recall 49.5%, and +27.9pt EM when the bridge entity is injected into the hop-2 query. So ACEC's center of gravity is **credit assignment during GRPO training** — a dense, calibrated, per-turn coverage signal that teaches the policy *what to retrieve next* (slot-targeted, bridge-entity-explicit queries) — with stopping/efficiency as the secondary win. Belief features to the policy stay in the design but as an ablated channel, not the headline.
 
+> **[2026-07-22 provenance caveat — do not treat +27.9pt as established.]** The
+> +27.9pt bridge-injection figure quoted above has **no reproducible source in
+> this repository** — no script, experiment record, or data produces it (grep of
+> `experiments/`, `run_scripts/`, and all code returns only design-doc
+> references). It appears to be a pre-ACEC oracle diagnostic (inject the *gold*
+> bridge entity into the hop-2 query, measure EM lift = an upper bound, not an
+> achieved result), likely measured on an earlier belief system / model /
+> retriever / eval subset, and may **not transfer** to the current
+> R3-RAG-Qwen + wiki18 + processed-EM pipeline. Any strategy that prioritizes
+> the bridge-entity lever on the strength of this number must first **re-derive
+> it on the current pipeline** (bridge-typed held-out questions, gold bridge
+> entity from `supporting_facts`, injected into hop-2, processed-EM with vs
+> without). This is the cheap probe the design's own D8–10 already specified and
+> that was never run — the mechanism fired 0 times historically (see
+> `CLAUDE.md`), plausibly because the empty-start / DECOMPOSE slot artifact
+> suppresses entity binding (see `ACEC_V6.2_EVOLUTION_DIRECTION.md` E5). Treat
+> the magnitude as unknown until re-measured; the qualitative point (retrieval
+> steering is the largest structural lever for a fixed-reasoning policy) stands
+> independently of the number.
+
 **(C3) A single Beta over "coverage fraction" is the wrong distribution family — reject it.** Coverage fraction is not the parameter of an exchangeable Bernoulli process: slots are few, non-exchangeable, monotonically absorbed (once covered, always covered), and their *number* is unknown. The right family is a **structured posterior**: independent per-slot binary latents with monotone Bayesian filtering, plus a categorical posterior over the number of required slots $K$. A Dirichlet-multinomial is also wrong (slots are not draws from a shared urn).
 
 **(C4) Demote $\theta_{llm}, \theta_{noise}$; reframe $\theta_{diff}$.** Keep the Beta-Bernoulli machinery only where it earns its keep: action-indexed *hit-rate* parameters $\pi_a$ (Section 1.3) and, optionally, the legacy slots as ablation. $\theta_{diff}$ becomes the amortized prior over $K$ — the one place "difficulty" has a crisp operational meaning (how many evidence pieces are required).
