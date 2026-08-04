@@ -296,6 +296,16 @@ def _initial_context(question: str) -> str:
     )
 
 
+def _free_text_prediction(row: Mapping[str, Any]) -> str:
+    """取被选轨迹的原始自由文本，供 processed-EM 的外部抽取器使用。
+
+    契约解析成功时 selected_raw_answer 与 selected_answer 内容一致；缺 <answer>
+    标签时只有前者非空。回退到 selected_answer 是为了兼容尚未携带原文的旧记录。
+    """
+    raw = str(row.get("selected_raw_answer") or "").strip()
+    return raw or str(row.get("selected_answer") or "").strip()
+
+
 def rollout_controller_batch(
     llm: Any,
     lora_request: Any,
@@ -398,6 +408,13 @@ def rollout_controller_batch(
                 short = parse_tagged_short_answer(parsed["answer"])
                 if not short.valid:
                     state["format_valid"] = False
+                    # 策略确实产出了答案文本，只是不满足 v6.3 的标签契约。
+                    # 以前这里让 answered 保持 False，连带把 grounding_pairs、
+                    # grounding_score、zero_shot_acec_score 全部清零（实测 98–100%
+                    # 的候选受影响），使 nli/acec_zero_shot 在全零打分上排序、
+                    # 退化成"取第一个"，verifier 阶梯因此从未被真正检验过。
+                    # answered 表示"是否作答"，契约合规性由 format_valid 承载。
+                    state["answered"] = True
                     state["answer_parse_status"] = short.status
                     state["events"].append(
                         {
@@ -619,7 +636,12 @@ def score_grounding_batch(states: Sequence[Mapping[str, Any]], batch_size: int) 
     for state_index, state in enumerate(states):
         if not state["answered"]:
             continue
-        hypothesis = answer_hypothesis(state["question"], state["answer"])
+        # 契约不合规时 state["answer"] 是空串，用原始输出构造假设，
+        # 否则 NLI 会对着空答案打分，grounding_score 依旧无意义。
+        answer_text = str(state["answer"] or state.get("raw_answer") or "").strip()
+        if not answer_text:
+            continue
+        hypothesis = answer_hypothesis(state["question"], answer_text)
         for document in state["retrieved_documents"]:
             contents = str(document.get("contents") or "")
             if contents:
@@ -672,6 +694,7 @@ def states_to_candidates(
                 ),
                 answered=bool(state["answered"]),
                 format_valid=bool(state["format_valid"]),
+                raw_answer=str(state.get("raw_answer") or ""),
                 metadata={
                     "answer_parse_status": state["answer_parse_status"],
                     "bound_slot_count": sum(
@@ -1330,15 +1353,33 @@ def main() -> None:
     for arm_name, arm_result in factorial.items():
         for selector_key, rows in arm_result["selections"].items():
             safe_key = selector_key.replace("@", "_k")
+            # `prediction` 必须是**原始自由文本**，不是标签契约裁剪后的结果。
+            # v6.3 的 tagged_short_answer 契约要求策略输出 <answer>...</answer>，
+            # 而 R3-RAG-Qwen 是按 `Step N:` 模板刚性微调的，实测 96.5–98.8% 的
+            # 轨迹判为 missing_answer_tag —— 但 raw_answer 里躺着 "Selma."
+            # 这类完全正确的短答案。若此处沿用契约结果，写出的全是空串，
+            # eval_r3_processed_answers_api 的抽取器拿不到任何可抽取的文本，
+            # processed-EM 这条兜底通路就形同虚设（v5 管线保留的正是自由文本）。
+            #
+            # 严格 Answer EM 不受影响：它由 results.json 里的 em/f1 承载，
+            # 这里额外落 contract_answer/contract_valid 以便两种口径并列报告。
+            # golden_answers 是 load_inputs() 的硬性要求，缺了会直接 ValueError。
             _write_jsonl(
                 selection_dir / f"{arm_name}__{safe_key}.jsonl",
                 (
                     {
                         "question_id": row["question_id"],
                         "id": row["question_id"],
-                        "answer": row["selected_answer"],
-                        "prediction": row["selected_answer"],
-                        "answered": bool(row["selected_answer"]),
+                        "answer": _free_text_prediction(row),
+                        "prediction": _free_text_prediction(row),
+                        "answered": bool(_free_text_prediction(row)),
+                        "golden_answers": list(
+                            gold_answers.get(row["question_id"], [])
+                        ),
+                        "em": float(row["em"]),
+                        "f1": float(row["f1"]),
+                        "contract_answer": row["selected_answer"],
+                        "contract_valid": bool(row["selected_answer"]),
                         "selected_sample_index": row["selected_sample_index"],
                         "policy_controller_arm": arm_name,
                         "verifier": row["mode"],

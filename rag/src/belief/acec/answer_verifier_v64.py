@@ -88,13 +88,22 @@ class TrajectoryCandidateV64:
     answered: bool = True
     format_valid: bool = True
     processed_answer: Optional[str] = None
+    # 策略输出的原始自由文本，未经 v6.3 标签契约裁剪。`answer` 在缺 <answer>
+    # 标签时会是空串，但模型往往已经答对了（实测 96.5–98.8% 的轨迹如此），
+    # 所以原文必须单独留存，否则 processed-EM 的抽取器无米可炊。
+    raw_answer: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.question_id or self.sample_index < 0:
             raise ValueError("candidate requires question id and non-negative sample index")
-        if self.answered and not str(self.answer).strip():
-            raise ValueError("answered candidate has an empty answer")
+        # `answered` 表示"策略产出了答案文本"，与是否满足 v6.3 标签契约无关。
+        # 契约不合规时 `answer` 为空但 `raw_answer` 有内容，此时仍算已作答，
+        # 契约合规性由 `format_valid` 单独承载。
+        if self.answered and not (
+            str(self.answer).strip() or str(self.raw_answer).strip()
+        ):
+            raise ValueError("answered candidate has no answer text")
         for name in ("grounding_score", "coverage"):
             _clamp_probability(getattr(self, name))
         if not math.isfinite(float(self.coverage_std)) or self.coverage_std < 0.0:
@@ -115,9 +124,23 @@ class TrajectoryCandidateV64:
         return _clamp_probability(self.grounding_score * self.coverage_confidence)
 
     def scoring_answer(self, processed: bool = False) -> str:
+        """用于计分的答案：严格遵循 v6.3 契约，契约不合规时为空串。
+
+        **不要**在这里回退到 raw_answer —— 本方法同时供 EM/F1 计算使用，
+        回退会把严格 Answer EM 悄悄变成归一化 EM，破坏两种口径的分离。
+        选择（best-of-N）请用 selection_answer()。
+        """
         if processed and self.processed_answer:
             return str(self.processed_answer)
         return str(self.answer)
+
+    def selection_answer(self, processed: bool = False) -> str:
+        """用于候选间比较/分组的答案文本，契约不合规时回退到原始输出。
+
+        majority 之类的选择器需要看到真实答案才能分组；若沿用 scoring_answer，
+        契约不合规时全部候选都是空串，会退化成单一分组并总是选中 sample 0。
+        """
+        return self.scoring_answer(processed) or str(self.raw_answer or "")
 
     def feature_dict(self) -> Dict[str, float]:
         return {
@@ -500,7 +523,7 @@ def select_candidate_v64(
             ordered = valid
         groups: Dict[str, List[TrajectoryCandidateV64]] = defaultdict(list)
         for candidate in ordered:
-            groups[normalize_answer(candidate.scoring_answer(processed))].append(candidate)
+            groups[normalize_answer(candidate.selection_answer(processed))].append(candidate)
         winning_key = min(
             groups,
             key=lambda key: (
@@ -556,6 +579,9 @@ class BestOfNSelectionV64:
     total_retrieval_calls: int
     total_generation_calls: int
     total_grounding_pairs: int
+    # 被选中那条轨迹的原始自由文本；严格 EM 仍由 selected_answer 计算，
+    # 这一项只供 processed-EM 的外部抽取器使用。
+    selected_raw_answer: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -618,13 +644,16 @@ def evaluate_best_of_n_v64(
                         mode=mode,
                         selected_sample_index=selected.sample_index,
                         selected_answer=answer,
+                        selected_raw_answer=str(selected.raw_answer or ""),
                         em=answer_exact_match(answer, golds),
                         f1=answer_f1(answer, golds),
                         oracle_em=max(candidate_ems),
                         oracle_f1=max(candidate_f1s),
+                        # 用 selection_answer：契约不合规时 scoring_answer 全为空串，
+                        # 该计数会恒等于 1，掩盖真实的候选多样性。
                         unique_answer_count=len(
                             {
-                                normalize_answer(candidate.scoring_answer(processed))
+                                normalize_answer(candidate.selection_answer(processed))
                                 for candidate in subset
                             }
                         ),
