@@ -171,6 +171,7 @@ class TrajectoryCandidateV64:
             grounding_pairs=int(payload.get("grounding_pairs", 0)),
             answered=bool(payload.get("answered", True)),
             format_valid=bool(payload.get("format_valid", True)),
+            raw_answer=str(payload.get("raw_answer") or ""),
             processed_answer=(
                 None
                 if payload.get("processed_answer") is None
