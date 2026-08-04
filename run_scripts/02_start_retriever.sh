@@ -21,8 +21,10 @@ FAISS_GPU="${FAISS_GPU:-0}"
 REPO_ROOT="$HOME"
 ENV_FILE="$(dirname "$0")/.env_retriever"
 
-HOST=$(hostname -I | awk '{print $1}')
-PORT=8001
+# 默认保持原行为（绑本机 LAN 地址、8001），但允许覆盖：共享机器上应绑回环并
+# 换非默认端口，既避免与他人的服务撞端口，也不把检索服务暴露给整个集群。
+HOST="${RETRIEVER_HOST:-$(hostname -I | awk '{print $1}')}"
+PORT="${RETRIEVER_PORT:-8001}"
 MODEL="$REPO_ROOT/models/e5-base-v2"
 
 if [ "${MINI:-0}" = "1" ]; then
@@ -50,7 +52,7 @@ echo "[$(date)] GPU_ID=${GPU_ID} FAISS_GPU=${FAISS_GPU}"
 CUDA_VISIBLE_DEVICES=${GPU_ID} PYTHONUNBUFFERED=1 \
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 \
 FAISS_GPU=${FAISS_GPU} \
-"$REPO_ROOT/rag/.venv/bin/python" \
+"${PYTHON:-$REPO_ROOT/rag/.venv/bin/python}" \
     "$REPO_ROOT/rag/benchmark/retriever/src/retrive_server.py" \
     --host ${HOST} \
     --port ${PORT} \

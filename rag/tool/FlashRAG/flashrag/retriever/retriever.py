@@ -394,7 +394,13 @@ class DenseRetriever(BaseTextRetriever):
         self.index = faiss.read_index(self.index_path)
         if self.use_faiss_gpu:
             co = faiss.GpuMultipleClonerOptions()
-            co.useFloat16 = True
+            # fp16 会改变检索结果，进而改变 ACEC 的 belief/NLI reward，使本机
+            # 结果无法与既有的 49 个 CPU-fp32 run 并列比较。默认改回 fp32；
+            # 需要省显存时用 FAISS_GPU_USE_FLOAT16=1 显式开启（此时结果必须
+            # 标注为不可与历史基线并列）。
+            # 注意 co.shard=True 时索引会按可见 GPU 数均分，所以真正决定
+            # 单卡占用的是 CUDA_VISIBLE_DEVICES 里给了几张卡。
+            co.useFloat16 = os.environ.get("FAISS_GPU_USE_FLOAT16", "0") == "1"
             co.shard = True
             self.index = faiss.index_cpu_to_all_gpus(self.index, co=co)
 
