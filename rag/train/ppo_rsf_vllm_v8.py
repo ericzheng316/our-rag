@@ -108,7 +108,11 @@ class ValueHead(torch.nn.Module):
     def __init__(self, hidden_size: int):
         super().__init__()
         self.linear = torch.nn.Linear(hidden_size, 1, dtype=torch.float32)
-        torch.nn.init.normal_(self.linear.weight, std=1.0 / math.sqrt(hidden_size + 1))
+        # 零初始化：V≡0 起步。随机初始化在未归一的隐状态（范数可达几十）上
+        # 会给出 ±3 量级的初始值，首个 episode 实测 value_loss 5.34、
+        # explained_variance -1596；零初始化让首步 value_loss = 0.5·E[ret²]，
+        # 梯度经 dL/dW=(V-ret)·h 正常流动。
+        torch.nn.init.zeros_(self.linear.weight)
         torch.nn.init.zeros_(self.linear.bias)
 
     def forward(self, hidden: torch.Tensor) -> torch.Tensor:

@@ -86,6 +86,11 @@ class HeadAndStatsTest(unittest.TestCase):
         self.assertEqual(out.dtype, torch.float32)
         self.assertEqual(out.shape, ())
 
+    def test_value_head_zero_init(self):
+        vh = ValueHead(64)
+        out = vh(torch.randn(64, dtype=torch.bfloat16) * 50)
+        self.assertEqual(float(out), 0.0)
+
     def test_normalize(self):
         x = torch.tensor([1.0, 2.0, 3.0, 4.0])
         n = normalize_advantages(x)
