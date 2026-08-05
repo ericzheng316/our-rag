@@ -80,10 +80,19 @@ def prepare(args: argparse.Namespace) -> None:
     metadata_output = output.with_suffix(output.suffix + ".meta.json")
     if output.exists() or ids_output.exists() or metadata_output.exists():
         raise FileExistsError("refusing to overwrite bridge-oracle outputs")
+    # 类型字段与 infer_belief_controller_v64.load_questions 同款三级回退：
+    # 仓库自备的 dev_distractor.jsonl 把 type 放在 metadata.type，只读顶层
+    # 会得到 "no bridge questions"（HotpotQA 实际约八成是 bridge）。
     labels = [
         derive_gold_bridge_entity_v64(row)
         for row in _read_records(source)
-        if str(row.get("type", row.get("question_type", ""))) == "bridge"
+        if str(
+            row.get(
+                "type",
+                row.get("question_type", (row.get("metadata") or {}).get("type", "")),
+            )
+        )
+        == "bridge"
     ]
     if not labels:
         raise ValueError("bridge-oracle source contains no bridge questions")
