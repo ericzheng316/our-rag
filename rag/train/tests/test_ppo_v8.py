@@ -12,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 
 from ppo_rsf_vllm_v8 import (
+    MLPValueHead,
     ValueHead,
+    make_value_head,
     clipped_value_loss,
     explained_variance,
     gae_advantages,
@@ -90,6 +92,22 @@ class HeadAndStatsTest(unittest.TestCase):
         vh = ValueHead(64)
         out = vh(torch.randn(64, dtype=torch.bfloat16) * 50)
         self.assertEqual(float(out), 0.0)
+
+    def test_mlp_head_zero_init_and_grad(self):
+        vh = MLPValueHead(64, 32)
+        h = torch.randn(64, dtype=torch.bfloat16) * 50
+        out = vh(h)
+        self.assertEqual(out.dtype, torch.float32)
+        self.assertEqual(float(out), 0.0)          # 末层零初始化 → V≡0 起步
+        loss = (vh(h) - 1.0) ** 2
+        loss.backward()
+        g = vh.net[-1].weight.grad
+        self.assertIsNotNone(g)
+        self.assertGreater(float(g.abs().sum()), 0.0)  # 梯度经末层正常流动
+
+    def test_factory_switches(self):
+        self.assertIsInstance(make_value_head(16, 0), ValueHead)
+        self.assertIsInstance(make_value_head(16, 8), MLPValueHead)
 
     def test_normalize(self):
         x = torch.tensor([1.0, 2.0, 3.0, 4.0])

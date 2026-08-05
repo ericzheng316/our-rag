@@ -63,7 +63,9 @@ def build_parser():
                    help="must match the SFT adapter's rank")
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--critic_lr", type=float, default=1e-4)
-    p.add_argument("--gamma", type=float, default=1.0)
+    p.add_argument("--critic_hidden", type=int, default=256,
+                   help="critic MLP 隐层宽度；0=线性探针")
+    p.add_argument("--gamma", type=float, default=0.99)  # owner 2026-08-05：多跳长视界
     p.add_argument("--gae_lambda", type=float, default=0.95)
     p.add_argument("--clip_eps", type=float, default=0.2)
     p.add_argument("--value_clip", type=float, default=0.2)
@@ -107,7 +109,7 @@ def main() -> None:
     from agent.episode import run_episodes_batched
     from belief.acec.answer_verifier_v64 import answer_exact_match
     from engine_pool import EnginePool
-    from ppo_rsf_vllm_v8 import ValueHead, ppo_update
+    from ppo_rsf_vllm_v8 import make_value_head, ppo_update
     from vllm_adapter_export import export_for_vllm
 
     def log(msg: str) -> None:
@@ -152,9 +154,12 @@ def main() -> None:
     base = AutoModelForCausalLM.from_pretrained(
         args.base_model, torch_dtype=torch.bfloat16, device_map={"": 0})
     model = PeftModel.from_pretrained(base, args.sft_adapter, is_trainable=True)
+    # KL 参考 = 冻结的 SFT 初始策略（不是裸基座）——第二份同源 adapter，命名 "ref"
+    model.load_adapter(args.sft_adapter, adapter_name="ref")
+    model.set_adapter("default")
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
-    vhead = ValueHead(model.config.hidden_size).to(model.device)
+    vhead = make_value_head(model.config.hidden_size, args.critic_hidden).to(model.device)
     optimizer = torch.optim.AdamW([
         {"params": [p for p in model.parameters() if p.requires_grad], "lr": args.lr},
         {"params": vhead.parameters(), "lr": args.critic_lr},

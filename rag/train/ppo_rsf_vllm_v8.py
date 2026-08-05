@@ -102,6 +102,30 @@ def explained_variance(returns: torch.Tensor, values: torch.Tensor) -> float:
     return float(1.0 - (returns - values).var(unbiased=False) / var)
 
 
+class MLPValueHead(torch.nn.Module):
+    """两层 fp32 值头（owner: critic 需要非线性）。末层零初始化保 V≡0 起步。"""
+
+    def __init__(self, hidden_size: int, mlp_hidden: int = 256):
+        super().__init__()
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(hidden_size, mlp_hidden, dtype=torch.float32),
+            torch.nn.Tanh(),
+            torch.nn.Linear(mlp_hidden, 1, dtype=torch.float32),
+        )
+        torch.nn.init.zeros_(self.net[-1].weight)
+        torch.nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, hidden: torch.Tensor) -> torch.Tensor:
+        return self.net(hidden.float()).squeeze(-1)
+
+
+def make_value_head(hidden_size: int, critic_hidden: int = 256) -> torch.nn.Module:
+    """critic_hidden=0 退回线性探针；>0 用 MLP。"""
+    if critic_hidden and critic_hidden > 0:
+        return MLPValueHead(hidden_size, critic_hidden)
+    return ValueHead(hidden_size)
+
+
 class ValueHead(torch.nn.Module):
     """fp32 linear state-value head on the trunk's hidden state."""
 
@@ -136,10 +160,27 @@ def _turn_forward(model, vhead, inp_ids, out_ids, need_grad: bool):
 
 
 def _reference_logprobs(model, inp_ids, out_ids):
+    """KL 锚定的参考策略 logprobs。
+
+    若模型载有名为 "ref" 的冻结 adapter（= SFT 初始策略），锚向它——这才是
+    RLHF 语义下正确的参考：KL 约束的是“别漂离受训起点”，而不是“漂回裸基座”。
+    没有 ref adapter 时退回 disable_adapter()（legacy R3 路径的行为）。
+    """
     from grpo_estimator_v2 import completion_token_logprobs
 
-    with torch.no_grad(), model.disable_adapter():
-        logits = model(torch.cat([inp_ids, out_ids]).unsqueeze(0)).logits
+    full = torch.cat([inp_ids, out_ids]).unsqueeze(0)
+    peft_cfg = getattr(model, "peft_config", {}) or {}
+    with torch.no_grad():
+        if "ref" in peft_cfg:
+            active = model.active_adapter
+            model.set_adapter("ref")
+            try:
+                logits = model(full).logits
+            finally:
+                model.set_adapter(active)
+        else:
+            with model.disable_adapter():
+                logits = model(full).logits
         return completion_token_logprobs(logits, out_ids)
 
 
