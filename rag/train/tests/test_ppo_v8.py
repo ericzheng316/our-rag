@@ -123,11 +123,26 @@ class HeadAndStatsTest(unittest.TestCase):
         self.assertTrue(math.isnan(explained_variance(torch.ones(3), torch.zeros(3))))
 
 
-class _FakeCausalLM(torch.nn.Module):
-    """HF 接口形状的确定性假模型：嵌入 → 线性 logits。
+class _FakeBackbone(torch.nn.Module):
+    class _Out:
+        def __init__(self, h):
+            self.last_hidden_state = h
 
-    逐位置独立（严格因果、pad 不敏感），所以批版与逐条的任何数值差异
-    只能来自 padding / gather / 索引算术 —— 正是这组测试要守的东西。
+    def __init__(self, vocab, hidden):
+        super().__init__()
+        self.emb = torch.nn.Embedding(vocab, hidden)
+
+    def forward(self, input_ids, attention_mask=None):
+        return self._Out(self.emb(input_ids))
+
+
+class _FakeCausalLM(torch.nn.Module):
+    """HF CausalLM 形状的确定性假模型：.model(backbone) + .lm_head。
+
+    逐位置独立（严格因果、pad 不敏感），所以批版（backbone + completion 行
+    lm_head 切片）与逐条完整调用的任何数值差异只能来自 padding / gather /
+    索引算术 —— 正是这组测试要守的东西。完整 forward 与子模块共享参数，
+    等价断言因此同时验证了 lm_head 切片路径。
     """
 
     class _Out:
@@ -138,12 +153,12 @@ class _FakeCausalLM(torch.nn.Module):
     def __init__(self, vocab=64, hidden=16):
         super().__init__()
         torch.manual_seed(7)
-        self.emb = torch.nn.Embedding(vocab, hidden)
-        self.head = torch.nn.Linear(hidden, vocab)
+        self.model = _FakeBackbone(vocab, hidden)
+        self.lm_head = torch.nn.Linear(hidden, vocab)
 
     def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
-        h = self.emb(input_ids)
-        return self._Out(self.head(h), h)
+        h = self.model(input_ids).last_hidden_state
+        return self._Out(self.lm_head(h), h)
 
 
 class MicroBatchEquivalenceTest(unittest.TestCase):
@@ -183,8 +198,8 @@ class MicroBatchEquivalenceTest(unittest.TestCase):
             self.model, self.vh, self.pairs, need_grad=True)
         loss = sum(lp.mean() for lp in lps) + sum(v for v in vs)
         loss.backward()
-        self.assertIsNotNone(self.model.head.weight.grad)
-        self.assertGreater(float(self.model.head.weight.grad.abs().sum()), 0.0)
+        self.assertIsNotNone(self.model.lm_head.weight.grad)
+        self.assertGreater(float(self.model.lm_head.weight.grad.abs().sum()), 0.0)
 
 
 if __name__ == "__main__":

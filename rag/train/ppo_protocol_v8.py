@@ -71,8 +71,10 @@ def build_parser():
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
     p.add_argument("--kl_coef", type=float, default=0.01)
-    p.add_argument("--micro_turns", type=int, default=4,
-                   help="update 阶段每次 forward+backward 合并的 turn 数")
+    p.add_argument("--micro_turns", type=int, default=1,
+                   help="带梯度 forward+backward 合并 turn 数（实测 >1 在 seq~2k OOM）")
+    p.add_argument("--scan_batch", type=int, default=8,
+                   help="no_grad 值预扫的批大小")
     p.add_argument("--entropy_coef", type=float, default=0.0)
     p.add_argument("--ppo_epochs", type=int, default=1)
     p.add_argument("--max_grad_norm", type=float, default=1.0)
@@ -280,7 +282,7 @@ def main() -> None:
             entropy_coef=args.entropy_coef, ppo_epochs=args.ppo_epochs,
             max_grad_norm=args.max_grad_norm,
             max_engine_logprob_mae=None,
-            micro_turns=args.micro_turns,
+            micro_turns=args.micro_turns, scan_batch=args.scan_batch,
         )
         update_s = time.time() - t1
 

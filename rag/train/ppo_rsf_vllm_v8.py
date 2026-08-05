@@ -182,24 +182,34 @@ def _gather_completion_logprobs(logits_row_fp32, out_ids):
     return lp - torch.logsumexp(logits_row_fp32, dim=-1)
 
 
+def _split_lm(model):
+    """(backbone, lm_head)。直接调子模块不会绕过 LoRA——peft 的注入是
+    模块级的（Linear 被原地替换成 LoraLayer），adapter 启停也是模块状态。
+    lm_head 本身无 LoRA（SFT 用标准 7 投影）。"""
+    base = model.get_base_model() if hasattr(model, "get_base_model") else model
+    return base.model, base.lm_head
+
+
 def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
                            want_entropy: bool = False):
     """micro-batch 版 _turn_forward：一次 forward 处理多个 turn 样本。
 
-    返回 (token_lps: list[Tensor], values: list[Tensor], entropies: list)。
-    fp32 转换只发生在每样本被 gather 的 completion 行上——不整批提升，
-    避免 batch×seq×vocab 的 fp32 物化。
+    显存关键（2026-08-05 实测教训）：CausalLM 完整调用物化 [B,T,V] logits，
+    其 backward 中间量 ~20 GiB/样本@seq2k——批 4 直接 OOM 80G 卡。这里改为
+    backbone → last_hidden_state（只最后一层），再把每样本的 completion 行
+    （几十行，不是全序列）单独过 lm_head。同一算术，物化少两个数量级。
+    fp32 只发生在被 gather 的行上。
     """
     device = next(model.parameters()).device
+    backbone, lm_head = _split_lm(model)
     full, mask, lens = _pad_batch(pairs, device)
     ctx = torch.enable_grad() if need_grad else torch.no_grad()
     with ctx:
-        outp = model(full, attention_mask=mask, output_hidden_states=True)
-        hidden = outp.hidden_states[-1]
+        hidden = backbone(full, attention_mask=mask).last_hidden_state
         token_lps, values, entropies = [], [], []
         for b, (inp, out) in enumerate(pairs):
             li, lo = lens[b]
-            rows = outp.logits[b, li - 1: li + lo - 1].float()
+            rows = lm_head(hidden[b, li - 1: li + lo - 1]).float()
             token_lps.append(_gather_completion_logprobs(rows, out.to(device)))
             values.append(vhead(hidden[b, li - 1]))
             if want_entropy:
@@ -211,27 +221,33 @@ def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
 
 
 def _reference_logprobs_batched(model, pairs):
-    """micro-batch 版参考策略 logprobs——每块只切换一次 adapter。"""
+    """micro-batch 版参考策略 logprobs——每块只切换一次 adapter，
+    同样走 backbone + completion 行 lm_head（见 _turns_forward_batched）。"""
     device = next(model.parameters()).device
+    backbone, lm_head = _split_lm(model)
     full, mask, lens = _pad_batch(pairs, device)
     peft_cfg = getattr(model, "peft_config", {}) or {}
+
+    def _rows():
+        hidden = backbone(full, attention_mask=mask).last_hidden_state
+        return [
+            _gather_completion_logprobs(
+                lm_head(hidden[b, lens[b][0] - 1: lens[b][0] + lens[b][1] - 1]).float(),
+                out.to(device))
+            for b, (_inp, out) in enumerate(pairs)
+        ]
+
     with torch.no_grad():
         if "ref" in peft_cfg:
             active = model.active_adapter
             model.set_adapter("ref")
             try:
-                logits = model(full, attention_mask=mask).logits
+                return _rows()
             finally:
                 model.set_adapter(active)
         else:
             with model.disable_adapter():
-                logits = model(full, attention_mask=mask).logits
-        return [
-            _gather_completion_logprobs(
-                logits[b, lens[b][0] - 1: lens[b][0] + lens[b][1] - 1].float(),
-                out.to(device))
-            for b, (_inp, out) in enumerate(pairs)
-        ]
+                return _rows()
 
 
 def _reference_logprobs(model, inp_ids, out_ids):
@@ -275,13 +291,17 @@ def ppo_update(
     ppo_epochs: int,
     max_grad_norm: float,
     max_engine_logprob_mae: Optional[float],
-    micro_turns: int = 4,
+    micro_turns: int = 1,
+    scan_batch: int = 8,
 ) -> dict:
     """One PPO update over a rollout batch.
 
-    Turn 样本按 ``micro_turns`` 组 micro-batch（长度排序减 padding），每块一次
-    forward+backward——与逐 turn 数学等价（loss 求和 / N），只是并了 kernel。
-    """
+    并发实测（2026-08-05, A100-80G, 9B+LoRA, seq~2k）：带梯度的 forward+backward
+    动态显存 ~20 GiB/样本（backbone 反传状态，lm_head 切片救不动），micro_turns>1
+    在长序列上会 OOM 或在显存边缘反复重试反而更慢 —— 单卡最优是逐条
+    （micro_turns=1，默认）；update 的横向扩展走 DDP 多卡。值预扫是 no_grad，
+    没有反传状态，``scan_batch``（默认 8）批扫稳赚。批版代码与逐条数学等价
+    （fake-model 测试 + 真模型 MAE ~0.02 = bf16 GEMM 形状噪声）。"""
     from grpo_rsf_simple import _unpack_turn
     from grpo_estimator_v2 import engine_hf_logprob_mae
 
@@ -298,9 +318,9 @@ def ppo_update(
         rows_by_traj.append(rows)
         flat_pairs.extend((inp, out) for inp, out, _r, _e, _t in rows)
     flat_lp, flat_v = [], []
-    for s0 in range(0, len(flat_pairs), max(micro_turns, 1)):
+    for s0 in range(0, len(flat_pairs), max(scan_batch, 1)):
         lps, vs, _ = _turns_forward_batched(
-            model, vhead, flat_pairs[s0:s0 + max(micro_turns, 1)], need_grad=False)
+            model, vhead, flat_pairs[s0:s0 + max(scan_batch, 1)], need_grad=False)
         flat_lp.extend(lps)
         flat_v.extend(float(v) for v in vs)
     idx = 0
@@ -460,7 +480,7 @@ def train(args) -> None:
             gamma=args.gamma, gae_lambda=args.gae_lambda,
             clip_eps=args.clip_eps, value_clip=args.value_clip,
             value_coef=args.value_coef, kl_coef=args.kl_coef,
-            micro_turns=args.micro_turns,
+            micro_turns=args.micro_turns, scan_batch=args.scan_batch,
             entropy_coef=args.entropy_coef, ppo_epochs=args.ppo_epochs,
             max_grad_norm=args.max_grad_norm,
             max_engine_logprob_mae=args.max_engine_logprob_mae,
@@ -515,8 +535,11 @@ def build_parser():
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
     p.add_argument("--kl_coef", type=float, default=0.01)
-    p.add_argument("--micro_turns", type=int, default=4,
-                   help="update 阶段每次 forward+backward 合并的 turn 数")
+    p.add_argument("--micro_turns", type=int, default=1,
+                   help="带梯度 forward+backward 合并 turn 数（实测 >1 在 seq~2k OOM，"
+                        "留 1；横向扩展走 DDP）")
+    p.add_argument("--scan_batch", type=int, default=8,
+                   help="no_grad 值预扫的批大小")
     p.add_argument("--entropy_coef", type=float, default=0.0)
     p.add_argument("--ppo_epochs", type=int, default=1)
     p.add_argument("--max_grad_norm", type=float, default=1.0)
