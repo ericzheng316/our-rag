@@ -256,8 +256,9 @@ def ppo_update(
             loss = p_loss + value_coef * v_loss
             if kl_coef > 0.0:
                 ref_lp = _reference_logprobs(model, inp, out)
-                loss = loss + kl_coef * (new_lp - ref_lp.to(device)).mean()
-                stats["kl"] += float((new_lp - ref_lp.to(device)).mean()) / max(len(turn_meta), 1)
+                kl_term = (new_lp - ref_lp.to(device)).mean()
+                loss = loss + kl_coef * kl_term
+                stats["kl"] += float(kl_term.detach()) / max(len(turn_meta), 1)
             if entropy_coef > 0.0:
                 full = torch.cat([inp, out]).unsqueeze(0)
                 logits = model(full).logits[0, -(out.numel() + 1):-1].float()
