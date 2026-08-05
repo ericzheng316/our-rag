@@ -81,6 +81,19 @@ class SelectionTest(unittest.TestCase):
         pick = select_action(self.VALUES, ucb_c=2.0, counts=counts)
         self.assertEqual(pick, ActionV8.QUERY_TARGET)
 
+    def test_tie_margin_defers_to_prior(self):
+        close = {ActionV8.QUERY_TARGET: 0.80, ActionV8.PIVOT_NEXT: 0.81, ActionV8.ANSWER: 0.2}
+        prior = {ActionV8.QUERY_TARGET: 0.7, ActionV8.PIVOT_NEXT: 0.2, ActionV8.ANSWER: 0.1}
+        # 差 0.01 落在噪声底内 → 先验裁决
+        self.assertEqual(
+            select_action(close, tie_margin=0.03, prior_probs=prior),
+            ActionV8.QUERY_TARGET)
+        # 差距拉大到 margin 之外 → 贪心不受先验影响
+        far = {ActionV8.QUERY_TARGET: 0.5, ActionV8.PIVOT_NEXT: 0.81, ActionV8.ANSWER: 0.2}
+        self.assertEqual(
+            select_action(far, tie_margin=0.03, prior_probs=prior),
+            ActionV8.PIVOT_NEXT)
+
 
 class ActionPriorTest(unittest.TestCase):
     def test_uniform_at_init(self):
@@ -90,11 +103,24 @@ class ActionPriorTest(unittest.TestCase):
             self.assertAlmostEqual(v, 1 / 3, places=9)
 
     def test_learns_rewarded_action(self):
+        # 可学性测试（非训练制度）：lr=0.2 x 50 步故意打满信号验证梯度方向
         p = ActionPriorV8(feature_names=["cov"])
         for _ in range(50):
-            p.update({"cov": 1.0}, ActionV8.ANSWER, advantage=1.0, lr=0.2)
+            p.update({"cov": 1.0}, ActionV8.ANSWER, advantage=1.0, lr=0.2, entropy_beta=0.0)
         probs = p.predict_proba({"cov": 1.0})
         self.assertGreater(probs[ActionV8.ANSWER], 0.8)
+
+    def test_uniform_mix_floors_collapse(self):
+        # 激进同向更新下，混合地板保证探索质量（熵正则只延缓内部塌缩）
+        p = ActionPriorV8(feature_names=["cov"])
+        for _ in range(300):
+            p.update({"cov": 1.0}, ActionV8.ANSWER, advantage=1.0, lr=0.2, entropy_beta=0.05)
+        probs = p.predict_proba({"cov": 1.0})
+        self.assertEqual(max(probs, key=probs.get), ActionV8.ANSWER)  # 方向仍正确
+        # 硬地板：min ≥ uniform_mix/K = 0.06/3 = 0.02
+        self.assertGreaterEqual(min(probs.values()), 0.06 / 3 - 1e-9)
+        # 内部 softmax 确实塌了（说明地板来自混合，不是熵正则撑住的）
+        self.assertLess(min(p._softmax({"cov": 1.0}).values()), 0.01)
 
     def test_round_update_and_roundtrip(self):
         p = ActionPriorV8(feature_names=["a", "b"])

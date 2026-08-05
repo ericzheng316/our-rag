@@ -80,10 +80,15 @@ class SlotV8:
 # ── 一步期望与动作价值 ──────────────────────────────────────────────────────
 
 def expected_return(branch_scores: Sequence[float]) -> float:
-    """E[R(s')] from executed-branch judge scores.
+    """E[R(s')] estimate from executed-branch judge scores.
 
-    Under greedy decoding and deterministic retrieval one sample per action
-    IS the expectation (n=1 exact); with sampling, pass n>=2 scores.
+    n=1 is exact only conditional on (a) a deterministic stack — measured to
+    be ~99% true under greedy decoding (vLLM batching flips ~1% of greedy
+    trajectories; mechC none-arms differed by ±0.015 mean retrievals) — and
+    (b) the value being defined under the greedy *continuation* policy
+    (rollout policy improvement), not V*. Use n>=2 under sampling, and pair
+    n=1 greedy use with ``select_action(tie_margin=...)`` so decisions inside
+    the noise floor defer to the prior instead of pretending precision.
     """
     if not branch_scores:
         raise ValueError("expected_return requires at least one branch score")
@@ -112,6 +117,10 @@ class ActionPriorV8:
     feature_names: Sequence[str]
     weights: Dict[str, Dict[str, float]] = field(default_factory=dict)
     bias: Dict[str, float] = field(default_factory=dict)
+    # 硬探索地板：对外概率 = (1-τ)·softmax + τ/K，最小概率恒 ≥ τ/K。
+    # 熵正则只能延缓持续同向更新下的塌缩（平衡点随 advantage/β 走），
+    # 混合地板才是保证；ε-greedy 是第三层独立保险。
+    uniform_mix: float = 0.06
 
     def __post_init__(self) -> None:
         for a in ActionV8.all():
@@ -127,12 +136,18 @@ class ActionPriorV8:
             )
         return out
 
-    def predict_proba(self, features: Mapping[str, float]) -> Dict[ActionV8, float]:
+    def _softmax(self, features: Mapping[str, float]) -> Dict[ActionV8, float]:
         logits = self._logits(features)
         m = max(logits.values())
         exps = {a: math.exp(v - m) for a, v in logits.items()}
         z = sum(exps.values())
         return {ActionV8(a): e / z for a, e in exps.items()}
+
+    def predict_proba(self, features: Mapping[str, float]) -> Dict[ActionV8, float]:
+        raw = self._softmax(features)
+        k = len(raw)
+        t = min(max(self.uniform_mix, 0.0), 1.0)
+        return {a: (1.0 - t) * p + t / k for a, p in raw.items()}
 
     def update(
         self,
@@ -140,31 +155,48 @@ class ActionPriorV8:
         action: ActionV8,
         advantage: float,
         lr: float = 0.1,
+        entropy_beta: float = 0.01,
     ) -> None:
-        """∇ log π(a|s) · advantage — one REINFORCE step."""
-        probs = self.predict_proba(features)
+        """One REINFORCE step with entropy regularization.
+
+        Gradient = advantage · ∇log π(a|s) + entropy_beta · ∇H(π(·|s)).
+        The entropy term (∂H/∂z_k = -p_k(log p_k + H)) counters the
+        deterministic collapse repeated same-direction updates would cause —
+        the prior must keep exploring; the ε-floor in select_action is the
+        second, independent safety net. entropy_beta=0 recovers plain
+        REINFORCE.
+        """
+        probs = self._softmax(features)
+        entropy = -sum(p * math.log(p + 1e-12) for p in probs.values())
         for a in ActionV8.all():
-            grad = (1.0 if a == action else 0.0) - probs[a]
-            self.bias[a.value] += lr * advantage * grad
+            p_a = probs[a]
+            grad = advantage * ((1.0 if a == action else 0.0) - p_a)
+            if entropy_beta > 0.0:
+                grad += entropy_beta * (-p_a * (math.log(p_a + 1e-12) + entropy))
+            self.bias[a.value] += lr * grad
             for f in self.feature_names:
-                self.weights[a.value][f] += lr * advantage * grad * float(features.get(f, 0.0))
+                self.weights[a.value][f] += lr * grad * float(features.get(f, 0.0))
 
     def update_round(
         self,
         episodes: Sequence[Mapping],
         lr: float = 0.1,
+        entropy_beta: float = 0.01,
     ) -> None:
         """按轮更新：episodes 元素含 features/action/advantage。"""
         for e in episodes:
-            self.update(e["features"], ActionV8(e["action"]), float(e["advantage"]), lr)
+            self.update(e["features"], ActionV8(e["action"]),
+                        float(e["advantage"]), lr, entropy_beta)
 
     def to_dict(self) -> Dict:
         return {"feature_names": list(self.feature_names),
-                "weights": self.weights, "bias": self.bias}
+                "weights": self.weights, "bias": self.bias,
+                "uniform_mix": self.uniform_mix}
 
     @classmethod
     def from_dict(cls, d: Mapping) -> "ActionPriorV8":
-        p = cls(feature_names=list(d["feature_names"]))
+        p = cls(feature_names=list(d["feature_names"]),
+                uniform_mix=float(d.get("uniform_mix", 0.06)))
         p.weights = {a: dict(w) for a, w in d["weights"].items()}
         p.bias = dict(d["bias"])
         return p
@@ -178,11 +210,15 @@ def select_action(
     epsilon: float = 0.0,
     ucb_c: float = 0.0,
     counts: Optional[Mapping[ActionV8, int]] = None,
+    tie_margin: float = 0.0,
+    prior_probs: Optional[Mapping[ActionV8, float]] = None,
     rng: Optional[random.Random] = None,
 ) -> ActionV8:
-    """Greedy over Q with optional ε-exploration or a UCB bonus.
+    """Greedy over Q with ε-exploration / UCB, honest about the noise floor.
 
     纯贪心不探索（owner 修正案）：epsilon>0 或 ucb_c>0 至少择一用于训练期。
+    tie_margin：n=1 估值的噪声底 —— 与最优值差距落在 margin 内的动作视为
+    统计打平，交给 prior_probs 裁决而不是假装 lookahead 分辨得出来。
     """
     if not values:
         raise ValueError("select_action requires non-empty values")
@@ -197,7 +233,12 @@ def select_action(
             for a in actions
         }
         return max(actions, key=lambda a: (adjusted[a], -actions.index(a)))
-    return max(actions, key=lambda a: (values[a], -actions.index(a)))
+    best = max(actions, key=lambda a: (values[a], -actions.index(a)))
+    if tie_margin > 0.0 and prior_probs:
+        tied = [a for a in actions if values[best] - values[a] <= tie_margin]
+        if len(tied) > 1:
+            return max(tied, key=lambda a: (float(prior_probs.get(a, 0.0)), -actions.index(a)))
+    return best
 
 
 # ── 预算算术 ────────────────────────────────────────────────────────────────
