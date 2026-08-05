@@ -159,6 +159,81 @@ def _turn_forward(model, vhead, inp_ids, out_ids, need_grad: bool):
     return token_lp, value
 
 
+def _pad_batch(pairs, device):
+    """right-pad [(inp, out), ...] → (full[B,T], mask[B,T], lens[(li,lo)])。
+
+    right-pad + causal attention 下前缀位置的输出与无 pad 单条完全同分布，
+    RoPE 位置也一致（0..L-1 在前缀）；每样本的 fp32 gather 算术与
+    ``completion_token_logprobs`` 逐条路径一字不差。
+    """
+    lens = [(int(i.numel()), int(o.numel())) for i, o in pairs]
+    T = max(li + lo for li, lo in lens)
+    full = torch.zeros(len(pairs), T, dtype=torch.long, device=device)
+    mask = torch.zeros(len(pairs), T, dtype=torch.long, device=device)
+    for b, (inp, out) in enumerate(pairs):
+        L = lens[b][0] + lens[b][1]
+        full[b, :L] = torch.cat([inp, out]).to(device)
+        mask[b, :L] = 1
+    return full, mask, lens
+
+
+def _gather_completion_logprobs(logits_row_fp32, out_ids):
+    lp = logits_row_fp32.gather(1, out_ids.unsqueeze(1)).squeeze(1)
+    return lp - torch.logsumexp(logits_row_fp32, dim=-1)
+
+
+def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
+                           want_entropy: bool = False):
+    """micro-batch 版 _turn_forward：一次 forward 处理多个 turn 样本。
+
+    返回 (token_lps: list[Tensor], values: list[Tensor], entropies: list)。
+    fp32 转换只发生在每样本被 gather 的 completion 行上——不整批提升，
+    避免 batch×seq×vocab 的 fp32 物化。
+    """
+    device = next(model.parameters()).device
+    full, mask, lens = _pad_batch(pairs, device)
+    ctx = torch.enable_grad() if need_grad else torch.no_grad()
+    with ctx:
+        outp = model(full, attention_mask=mask, output_hidden_states=True)
+        hidden = outp.hidden_states[-1]
+        token_lps, values, entropies = [], [], []
+        for b, (inp, out) in enumerate(pairs):
+            li, lo = lens[b]
+            rows = outp.logits[b, li - 1: li + lo - 1].float()
+            token_lps.append(_gather_completion_logprobs(rows, out.to(device)))
+            values.append(vhead(hidden[b, li - 1]))
+            if want_entropy:
+                logp = torch.log_softmax(rows, dim=-1)
+                entropies.append(-(logp.exp() * logp).sum(-1).mean())
+            else:
+                entropies.append(None)
+    return token_lps, values, entropies
+
+
+def _reference_logprobs_batched(model, pairs):
+    """micro-batch 版参考策略 logprobs——每块只切换一次 adapter。"""
+    device = next(model.parameters()).device
+    full, mask, lens = _pad_batch(pairs, device)
+    peft_cfg = getattr(model, "peft_config", {}) or {}
+    with torch.no_grad():
+        if "ref" in peft_cfg:
+            active = model.active_adapter
+            model.set_adapter("ref")
+            try:
+                logits = model(full, attention_mask=mask).logits
+            finally:
+                model.set_adapter(active)
+        else:
+            with model.disable_adapter():
+                logits = model(full, attention_mask=mask).logits
+        return [
+            _gather_completion_logprobs(
+                logits[b, lens[b][0] - 1: lens[b][0] + lens[b][1] - 1].float(),
+                out.to(device))
+            for b, (_inp, out) in enumerate(pairs)
+        ]
+
+
 def _reference_logprobs(model, inp_ids, out_ids):
     """KL 锚定的参考策略 logprobs。
 
@@ -200,8 +275,13 @@ def ppo_update(
     ppo_epochs: int,
     max_grad_norm: float,
     max_engine_logprob_mae: Optional[float],
+    micro_turns: int = 4,
 ) -> dict:
-    """One PPO update over a rollout batch. Backward per turn (memory)."""
+    """One PPO update over a rollout batch.
+
+    Turn 样本按 ``micro_turns`` 组 micro-batch（长度排序减 padding），每块一次
+    forward+backward——与逐 turn 数学等价（loss 求和 / N），只是并了 kernel。
+    """
     from grpo_rsf_simple import _unpack_turn
     from grpo_estimator_v2 import engine_hf_logprob_mae
 
@@ -209,29 +289,39 @@ def ppo_update(
     if not trajs:
         return {"skipped": True}
 
-    # 值预扫（更新前权重）→ GAE
+    # 值预扫（更新前权重，micro-batch）→ GAE
     turn_meta = []  # (traj_idx, t, inp, out, old_lp, adv, ret, v_old)
     model.eval()
-    with torch.no_grad():
-        for ti, traj in enumerate(trajs):
-            rewards, values = [], []
-            unpacked = []
-            for turn in traj:
-                inp, out, r, engine_lp, _temp = _unpack_turn(turn)
-                lp, v = _turn_forward(model, vhead, inp, out, need_grad=False)
-                if engine_lp is not None and max_engine_logprob_mae is not None:
-                    mae = float(engine_hf_logprob_mae(lp, engine_lp))
-                    if mae > max_engine_logprob_mae:
-                        raise RuntimeError(
-                            f"engine/HF logprob MAE {mae:.4f} > {max_engine_logprob_mae}"
-                        )
-                old_lp = engine_lp if engine_lp is not None else lp
-                rewards.append(float(r))
-                values.append(float(v))
-                unpacked.append((inp, out, old_lp.detach()))
-            advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
-            for t, (inp, out, old_lp) in enumerate(unpacked):
-                turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
+    flat_pairs, rows_by_traj = [], []
+    for traj in trajs:
+        rows = [_unpack_turn(turn) for turn in traj]
+        rows_by_traj.append(rows)
+        flat_pairs.extend((inp, out) for inp, out, _r, _e, _t in rows)
+    flat_lp, flat_v = [], []
+    for s0 in range(0, len(flat_pairs), max(micro_turns, 1)):
+        lps, vs, _ = _turns_forward_batched(
+            model, vhead, flat_pairs[s0:s0 + max(micro_turns, 1)], need_grad=False)
+        flat_lp.extend(lps)
+        flat_v.extend(float(v) for v in vs)
+    idx = 0
+    for ti, rows in enumerate(rows_by_traj):
+        rewards, values, unpacked = [], [], []
+        for inp, out, r, engine_lp, _temp in rows:
+            lp, v = flat_lp[idx], flat_v[idx]
+            idx += 1
+            if engine_lp is not None and max_engine_logprob_mae is not None:
+                mae = float(engine_hf_logprob_mae(lp, engine_lp))
+                if mae > max_engine_logprob_mae:
+                    raise RuntimeError(
+                        f"engine/HF logprob MAE {mae:.4f} > {max_engine_logprob_mae}"
+                    )
+            old_lp = engine_lp if engine_lp is not None else lp
+            rewards.append(float(r))
+            values.append(v)
+            unpacked.append((inp, out, old_lp.detach()))
+        advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
+        for t, (inp, out, old_lp) in enumerate(unpacked):
+            turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
 
     adv_flat = torch.tensor([m[5] for m in turn_meta], dtype=torch.float32)
     adv_norm = normalize_advantages(adv_flat)
@@ -241,38 +331,48 @@ def ppo_update(
     stats = {"policy_loss": 0.0, "value_loss": 0.0, "kl": 0.0, "clip_frac": 0.0, "n_turns": len(turn_meta)}
     model.train()
     device = next(model.parameters()).device
+    n_meta = max(len(turn_meta), 1)
     for _ in range(ppo_epochs):
         optimizer.zero_grad(set_to_none=True)
-        for ti, t, inp, out, old_lp, adv, ret, v_old in turn_meta:
-            new_lp, v_new = _turn_forward(model, vhead, inp, out, need_grad=True)
-            adv_t = torch.tensor(adv, dtype=torch.float32, device=device)
-            p_loss = ppo_policy_loss(new_lp, old_lp.to(device), adv_t, clip_eps)
-            v_loss = clipped_value_loss(
-                v_new,
-                torch.tensor(v_old, dtype=torch.float32, device=device),
-                torch.tensor(ret, dtype=torch.float32, device=device),
-                value_clip,
-            )
-            loss = p_loss + value_coef * v_loss
-            if kl_coef > 0.0:
-                ref_lp = _reference_logprobs(model, inp, out)
-                kl_term = (new_lp - ref_lp.to(device)).mean()
-                loss = loss + kl_coef * kl_term
-                stats["kl"] += float(kl_term.detach()) / max(len(turn_meta), 1)
-            if entropy_coef > 0.0:
-                full = torch.cat([inp, out]).unsqueeze(0)
-                logits = model(full).logits[0, -(out.numel() + 1):-1].float()
-                probs = torch.softmax(logits, dim=-1)
-                entropy = -(probs * torch.log(probs + 1e-9)).sum(-1).mean()
-                loss = loss - entropy_coef * entropy
-            (loss / len(turn_meta)).backward()
-            with torch.no_grad():
-                ratio = torch.exp(new_lp - old_lp.to(device))
-                stats["clip_frac"] += float(
-                    ((ratio - 1.0).abs() > clip_eps).float().mean()
-                ) / max(len(turn_meta), 1)
-            stats["policy_loss"] += float(p_loss) / max(len(turn_meta), 1)
-            stats["value_loss"] += float(v_loss) / max(len(turn_meta), 1)
+        # 长度排序减 padding 浪费；梯度是全和，顺序无关
+        order = sorted(range(len(turn_meta)),
+                       key=lambda j: turn_meta[j][2].numel() + turn_meta[j][3].numel())
+        for s0 in range(0, len(order), max(micro_turns, 1)):
+            chunk = [turn_meta[j] for j in order[s0:s0 + max(micro_turns, 1)]]
+            pairs = [(m[2], m[3]) for m in chunk]
+            new_lps, v_news, ents = _turns_forward_batched(
+                model, vhead, pairs, need_grad=True,
+                want_entropy=entropy_coef > 0.0)
+            ref_lps = (_reference_logprobs_batched(model, pairs)
+                       if kl_coef > 0.0 else [None] * len(chunk))
+            chunk_loss = None
+            for m, new_lp, v_new, ent, ref_lp in zip(
+                    chunk, new_lps, v_news, ents, ref_lps):
+                _ti, _t, _inp, _out, old_lp, adv, ret, v_old = m
+                adv_t = torch.tensor(adv, dtype=torch.float32, device=device)
+                p_loss = ppo_policy_loss(new_lp, old_lp.to(device), adv_t, clip_eps)
+                v_loss = clipped_value_loss(
+                    v_new,
+                    torch.tensor(v_old, dtype=torch.float32, device=device),
+                    torch.tensor(ret, dtype=torch.float32, device=device),
+                    value_clip,
+                )
+                loss = p_loss + value_coef * v_loss
+                if ref_lp is not None:
+                    kl_term = (new_lp - ref_lp.to(device)).mean()
+                    loss = loss + kl_coef * kl_term
+                    stats["kl"] += float(kl_term.detach()) / n_meta
+                if ent is not None:
+                    loss = loss - entropy_coef * ent
+                chunk_loss = loss if chunk_loss is None else chunk_loss + loss
+                with torch.no_grad():
+                    ratio = torch.exp(new_lp - old_lp.to(device))
+                    stats["clip_frac"] += float(
+                        ((ratio - 1.0).abs() > clip_eps).float().mean()
+                    ) / n_meta
+                stats["policy_loss"] += float(p_loss.detach()) / n_meta
+                stats["value_loss"] += float(v_loss.detach()) / n_meta
+            (chunk_loss / n_meta).backward()
         torch.nn.utils.clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad] + list(vhead.parameters()),
             max_grad_norm,
@@ -360,6 +460,7 @@ def train(args) -> None:
             gamma=args.gamma, gae_lambda=args.gae_lambda,
             clip_eps=args.clip_eps, value_clip=args.value_clip,
             value_coef=args.value_coef, kl_coef=args.kl_coef,
+            micro_turns=args.micro_turns,
             entropy_coef=args.entropy_coef, ppo_epochs=args.ppo_epochs,
             max_grad_norm=args.max_grad_norm,
             max_engine_logprob_mae=args.max_engine_logprob_mae,
@@ -414,6 +515,8 @@ def build_parser():
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
     p.add_argument("--kl_coef", type=float, default=0.01)
+    p.add_argument("--micro_turns", type=int, default=4,
+                   help="update 阶段每次 forward+backward 合并的 turn 数")
     p.add_argument("--entropy_coef", type=float, default=0.0)
     p.add_argument("--ppo_epochs", type=int, default=1)
     p.add_argument("--max_grad_norm", type=float, default=1.0)

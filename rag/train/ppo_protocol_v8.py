@@ -71,10 +71,16 @@ def build_parser():
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
     p.add_argument("--kl_coef", type=float, default=0.01)
+    p.add_argument("--micro_turns", type=int, default=4,
+                   help="update 阶段每次 forward+backward 合并的 turn 数")
     p.add_argument("--entropy_coef", type=float, default=0.0)
     p.add_argument("--ppo_epochs", type=int, default=1)
     p.add_argument("--max_grad_norm", type=float, default=1.0)
-    p.add_argument("--retrieval_cost", type=float, default=0.05)
+    p.add_argument("--retrieval_cost", type=float, default=0.005,
+                   help="EM(k) 推导（2026-08-05）：冷启动边际价值 0.0018/次，"
+                        "0.05 会教会策略不检索；训练中期按实测边际再调")
+    p.add_argument("--retrieve_chunk", type=int, default=128,
+                   help="批量检索单次 POST 的 query 上限（保护 retriever）")
     p.add_argument("--format_penalty", type=float, default=0.2)
     p.add_argument("--answer_weight", type=float, default=1.0)
     p.add_argument("--save_steps", type=int, default=25)
@@ -140,14 +146,18 @@ def main() -> None:
 
     session = requests.Session()
 
-    def faiss_retriever_factory(_task):
-        def retrieve(query: str, k: int):
-            resp = session.post(retrieve_url, json={"querys": [query]}, timeout=120)
+    def batched_retrieve(queries, k):
+        """一个 turn 边界的全部 query 一次批发（--retrieve_chunk 分块保护）。"""
+        out = []
+        for s0 in range(0, len(queries), max(args.retrieve_chunk, 1)):
+            batch = queries[s0:s0 + max(args.retrieve_chunk, 1)]
+            resp = session.post(retrieve_url, json={"querys": batch}, timeout=300)
             resp.raise_for_status()
-            docs = resp.json()[0][:k]
-            return [{"id": str(d.get("id", "")), "contents": str(d.get("contents", ""))}
-                    for d in docs]
-        return retrieve
+            for docs in resp.json():
+                out.append([{"id": str(d.get("id", "")),
+                             "contents": str(d.get("contents", ""))}
+                            for d in docs[:k]])
+        return out
 
     # ── 策略 + critic（训练卡）────────────────────────────────────────────
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
@@ -252,10 +262,11 @@ def main() -> None:
             lambda prompts: [r["text"] for r in pool.generate(
                 prompts, dict(sampling), adapter_path=adapter_path,
                 adapter_version=step + 1)],
-            faiss_retriever_factory,
+            None,
             chat_template_fn,
             max_turns=args.max_turns,
             docs_per_search=args.docs_per_search,
+            batched_retrieve_fn=batched_retrieve,
         )
         rollout_s = time.time() - t0
 
@@ -269,6 +280,7 @@ def main() -> None:
             entropy_coef=args.entropy_coef, ppo_epochs=args.ppo_epochs,
             max_grad_norm=args.max_grad_norm,
             max_engine_logprob_mae=None,
+            micro_turns=args.micro_turns,
         )
         update_s = time.time() - t1
 

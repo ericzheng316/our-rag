@@ -14,6 +14,8 @@ import torch
 from ppo_rsf_vllm_v8 import (
     MLPValueHead,
     ValueHead,
+    _turn_forward,
+    _turns_forward_batched,
     make_value_head,
     clipped_value_loss,
     explained_variance,
@@ -119,6 +121,70 @@ class HeadAndStatsTest(unittest.TestCase):
         r = torch.tensor([1.0, 2.0, 3.0])
         self.assertAlmostEqual(explained_variance(r, r.clone()), 1.0, places=6)
         self.assertTrue(math.isnan(explained_variance(torch.ones(3), torch.zeros(3))))
+
+
+class _FakeCausalLM(torch.nn.Module):
+    """HF 接口形状的确定性假模型：嵌入 → 线性 logits。
+
+    逐位置独立（严格因果、pad 不敏感），所以批版与逐条的任何数值差异
+    只能来自 padding / gather / 索引算术 —— 正是这组测试要守的东西。
+    """
+
+    class _Out:
+        def __init__(self, logits, hidden):
+            self.logits = logits
+            self.hidden_states = [hidden]
+
+    def __init__(self, vocab=64, hidden=16):
+        super().__init__()
+        torch.manual_seed(7)
+        self.emb = torch.nn.Embedding(vocab, hidden)
+        self.head = torch.nn.Linear(hidden, vocab)
+
+    def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
+        h = self.emb(input_ids)
+        return self._Out(self.head(h), h)
+
+
+class MicroBatchEquivalenceTest(unittest.TestCase):
+    def setUp(self):
+        self.model = _FakeCausalLM()
+        self.vhead = torch.nn.Linear(16, 1)
+        torch.nn.init.normal_(self.vhead.weight)
+
+        def vh(x):
+            return self.vhead(x).squeeze(-1)
+        self.vh = vh
+        g = torch.Generator().manual_seed(3)
+        self.pairs = [
+            (torch.randint(0, 64, (li,), generator=g),
+             torch.randint(0, 64, (lo,), generator=g))
+            for li, lo in ((5, 3), (9, 1), (2, 6))
+        ]
+
+    def test_batched_matches_single(self):
+        lps_b, vs_b, _ = _turns_forward_batched(
+            self.model, self.vh, self.pairs, need_grad=False)
+        for (inp, out), lp_b, v_b in zip(self.pairs, lps_b, vs_b):
+            lp_s, v_s = _turn_forward(self.model, self.vh, inp, out, need_grad=False)
+            self.assertTrue(torch.allclose(lp_b, lp_s, atol=1e-5),
+                            f"logprob 批/单不一致: {lp_b} vs {lp_s}")
+            self.assertTrue(torch.allclose(v_b, v_s, atol=1e-5))
+
+    def test_entropy_positive_and_shapes(self):
+        lps, vs, ents = _turns_forward_batched(
+            self.model, self.vh, self.pairs, need_grad=False, want_entropy=True)
+        for (_, out), lp, e in zip(self.pairs, lps, ents):
+            self.assertEqual(lp.numel(), out.numel())
+            self.assertGreater(float(e), 0.0)
+
+    def test_grad_flows_through_batch(self):
+        lps, vs, _ = _turns_forward_batched(
+            self.model, self.vh, self.pairs, need_grad=True)
+        loss = sum(lp.mean() for lp in lps) + sum(v for v in vs)
+        loss.backward()
+        self.assertIsNotNone(self.model.head.weight.grad)
+        self.assertGreater(float(self.model.head.weight.grad.abs().sum()), 0.0)
 
 
 if __name__ == "__main__":
