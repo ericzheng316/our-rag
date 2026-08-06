@@ -178,12 +178,24 @@ def main() -> None:
     session = requests.Session()
 
     def batched_retrieve(queries, k):
-        """一个 turn 边界的全部 query 一次批发（--retrieve_chunk 分块保护）。"""
+        """一个 turn 边界的全部 query 一次批发（--retrieve_chunk 分块保护）。
+
+        瞬断重试 3 次（指数退避）后仍失败就抛 —— 静默降级返回空列表是
+        2026-07-13 烧过一次的坑（带坏 reward 跑完全程），fail fast 正确。
+        """
         out = []
         for s0 in range(0, len(queries), max(args.retrieve_chunk, 1)):
             batch = queries[s0:s0 + max(args.retrieve_chunk, 1)]
-            resp = session.post(retrieve_url, json={"querys": batch}, timeout=300)
-            resp.raise_for_status()
+            for attempt in range(3):
+                try:
+                    resp = session.post(retrieve_url, json={"querys": batch},
+                                        timeout=300)
+                    resp.raise_for_status()
+                    break
+                except requests.RequestException:
+                    if attempt == 2:
+                        raise
+                    time.sleep(5 * (attempt + 1))
             for docs in resp.json():
                 out.append([{"id": str(d.get("id", "")),
                              "contents": str(d.get("contents", ""))}
