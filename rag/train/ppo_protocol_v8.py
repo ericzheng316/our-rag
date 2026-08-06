@@ -214,6 +214,17 @@ def main() -> None:
             enable_thinking=False)
 
     # ── 引擎（引擎卡，仅 rank0）───────────────────────────────────────────
+    # torchrun 注入的 dist 环境变量会被 EnginePool 的 spawn worker 继承，
+    # vLLM 内部 init 单进程分布式时读到它们就去连 torchrun 的 store（挂死在
+    # MASTER_PORT 的 TCP 重试上）。自己的进程组 init 完后这些 env 已无用，
+    # spawn 前清掉。
+    if world > 1:
+        for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE",
+                  "GROUP_RANK", "GROUP_WORLD_SIZE", "ROLE_RANK",
+                  "ROLE_WORLD_SIZE", "ROLE_NAME", "MASTER_ADDR", "MASTER_PORT",
+                  "TORCHELASTIC_RESTART_COUNT", "TORCHELASTIC_MAX_RESTARTS",
+                  "TORCHELASTIC_RUN_ID", "TORCHELASTIC_USE_AGENT_STORE"):
+            os.environ.pop(k, None)
     pool = None
     if rank == 0:
         pool = EnginePool(args.base_model, [args.engine_gpu],
