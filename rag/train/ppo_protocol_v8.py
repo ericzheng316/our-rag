@@ -48,7 +48,11 @@ def build_parser():
     p.add_argument("--save_path", required=True)
     p.add_argument("--retrieve_url", default="")
     p.add_argument("--engine_gpu", type=int, required=True)
-    p.add_argument("--train_gpu", type=int, required=True)
+    p.add_argument("--train_gpu", type=int, default=-1,
+                   help="单卡训练的物理卡号（与 --train_gpus 二选一）")
+    p.add_argument("--train_gpus", default="",
+                   help="逗号分隔的物理卡号列表；配 torchrun --nproc-per-node=N "
+                        "使用，rank i 用第 i 张。rank0 独占 rollout 引擎交互与保存")
     p.add_argument("--max_samples", type=int, default=0)
     p.add_argument("--num_episodes", type=int, default=100)
     p.add_argument("--batch_size", type=int, default=8, help="tasks per episode")
@@ -97,7 +101,18 @@ def main() -> None:
     args = build_parser().parse_args()
     # 训练进程钉在训练卡上；EnginePool 的 worker 会在自己的 spawn 进程里
     # 用物理编号重设 CUDA_VISIBLE_DEVICES（引擎卡），互不干扰。
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.train_gpu)
+    # DDP：torchrun 起 N 进程，rank i pin 到 --train_gpus 的第 i 张物理卡，
+    # 之后每进程内自己的卡都是 cuda:0。
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if args.train_gpus:
+        gpus = [int(x) for x in args.train_gpus.split(",") if x.strip()]
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpus[local_rank])
+        world = len(gpus)
+    else:
+        if args.train_gpu < 0:
+            raise SystemExit("需要 --train_gpu 或 --train_gpus")
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.train_gpu)
+        world = 1
 
     import json
     import random
@@ -113,6 +128,16 @@ def main() -> None:
     for extra in (repo / "rag" / "train", repo / "rag" / "src"):
         if str(extra) not in sys.path:
             sys.path.insert(0, str(extra))
+
+    import torch.distributed as dist
+
+    dist_group = None
+    rank = 0
+    if world > 1:
+        dist.init_process_group("nccl")
+        dist_group = dist.group.WORLD
+        rank = dist.get_rank()
+        torch.cuda.set_device(0)  # 每进程 CUDA_VISIBLE_DEVICES 已 pin 单卡
 
     from agent.episode import run_episodes_batched
     from belief.acec.answer_verifier_v64 import answer_exact_match
@@ -184,11 +209,13 @@ def main() -> None:
             messages, tokenize=False, add_generation_prompt=True,
             enable_thinking=False)
 
-    # ── 引擎（引擎卡）────────────────────────────────────────────────────
-    pool = EnginePool(args.base_model, [args.engine_gpu],
-                      max_lora_rank=args.lora_rank,
-                      gpu_memory_utilization=args.engine_mem_frac)
-    log(f"engine ready on GPU {args.engine_gpu}")
+    # ── 引擎（引擎卡，仅 rank0）───────────────────────────────────────────
+    pool = None
+    if rank == 0:
+        pool = EnginePool(args.base_model, [args.engine_gpu],
+                          max_lora_rank=args.lora_rank,
+                          gpu_memory_utilization=args.engine_mem_frac)
+        log(f"engine ready on GPU {args.engine_gpu}")
 
     os.makedirs(args.save_path, exist_ok=True)
     scratch = Path(args.save_path) / "_lora_scratch"
@@ -200,8 +227,6 @@ def main() -> None:
         vllm_dir = export_for_vllm(hf_dir, scratch / f"step_{step}_vllm")
         return str(vllm_dir)
 
-    adapter_path = export_step_adapter()
-
     def check_adapter(path: str) -> None:
         probe = chat_template_fn([
             {"role": "system", "content": "You answer questions."},
@@ -210,7 +235,12 @@ def main() -> None:
             raise RuntimeError(f"lora_check FAILED for {path} — adapter 静默未生效")
         log("lora_check PASS")
 
-    check_adapter(adapter_path)
+    adapter_path = ""
+    if rank == 0:
+        adapter_path = export_step_adapter()
+        check_adapter(adapter_path)
+    if dist_group is not None:
+        dist.barrier()
 
     sampling = {"temperature": args.rollout_temperature,
                 "max_tokens": args.max_new_tokens}
@@ -259,20 +289,22 @@ def main() -> None:
         dup = [t for t in batch for _ in range(args.n_rollouts)]
 
         t0 = time.time()
-        episodes = run_episodes_batched(
-            dup,
-            lambda prompts: [r["text"] for r in pool.generate(
-                prompts, dict(sampling), adapter_path=adapter_path,
-                adapter_version=step + 1)],
-            None,
-            chat_template_fn,
-            max_turns=args.max_turns,
-            docs_per_search=args.docs_per_search,
-            batched_retrieve_fn=batched_retrieve,
-        )
+        episodes, trajs, ep_stats, skipped_long = [], [], None, 0
+        if rank == 0:
+            episodes = run_episodes_batched(
+                dup,
+                lambda prompts: [r["text"] for r in pool.generate(
+                    prompts, dict(sampling), adapter_path=adapter_path,
+                    adapter_version=step + 1)],
+                None,
+                chat_template_fn,
+                max_turns=args.max_turns,
+                docs_per_search=args.docs_per_search,
+                batched_retrieve_fn=batched_retrieve,
+            )
+            trajs, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
 
-        trajs, ep_stats, skipped_long = episodes_to_trajs(episodes)
         t1 = time.time()
         stats = ppo_update(
             model, vhead, optimizer, [[t] for t in trajs],
@@ -283,10 +315,13 @@ def main() -> None:
             max_grad_norm=args.max_grad_norm,
             max_engine_logprob_mae=None,
             micro_turns=args.micro_turns, scan_batch=args.scan_batch,
+            dist_group=dist_group,
         )
         update_s = time.time() - t1
 
         step += 1
+        if rank != 0:
+            continue  # 非 rank0 直接进下一轮（broadcast 是天然同步点）
         adapter_path = export_step_adapter()
 
         n_ep = max(len(episodes), 1)
@@ -318,7 +353,11 @@ def main() -> None:
             export_for_vllm(ckpt, Path(str(ckpt) + "_vllm"))
             check_adapter(str(Path(str(ckpt) + "_vllm")))
 
-    pool.shutdown()
+    if pool is not None:
+        pool.shutdown()
+    if dist_group is not None:
+        dist.barrier()
+        dist.destroy_process_group()
     log("done")
 
 

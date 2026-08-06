@@ -293,6 +293,7 @@ def ppo_update(
     max_engine_logprob_mae: Optional[float],
     micro_turns: int = 1,
     scan_batch: int = 8,
+    dist_group=None,
 ) -> dict:
     """One PPO update over a rollout batch.
 
@@ -301,15 +302,29 @@ def ppo_update(
     在长序列上会 OOM 或在显存边缘反复重试反而更慢 —— 单卡最优是逐条
     （micro_turns=1，默认）；update 的横向扩展走 DDP 多卡。值预扫是 no_grad，
     没有反传状态，``scan_batch``（默认 8）批扫稳赚。批版代码与逐条数学等价
-    （fake-model 测试 + 真模型 MAE ~0.02 = bf16 GEMM 形状噪声）。"""
+    （fake-model 测试 + 真模型 MAE ~0.02 = bf16 GEMM 形状噪声）。
+
+    多卡（``dist_group`` 非 None 时）：rank0 做值预扫+GAE+归一并 broadcast
+    turn_meta；各 rank 训练 ``turn_meta[rank::world]``（长度排序后交错取，
+    负载均衡）；backward 后手动 all-reduce 所有可训参数梯度（SUM——每样本
+    loss 已 /N_total，SUM 即全量梯度），每 rank 各自 step。初始权重一致 +
+    梯度 bit 一致（NCCL 同结果）+ AdamW 无随机 ⇒ 权重保持一致；trajs 只需
+    rank0 提供。"""
     from grpo_rsf_simple import _unpack_turn
     from grpo_estimator_v2 import engine_hf_logprob_mae
 
-    trajs = [traj for qt in trajs_per_question for traj in qt if traj]
-    if not trajs:
-        return {"skipped": True}
+    rank, world = 0, 1
+    if dist_group is not None:
+        import torch.distributed as dist
+        rank, world = dist.get_rank(), dist.get_world_size()
 
-    # 值预扫（更新前权重，micro-batch）→ GAE
+    trajs = [traj for qt in (trajs_per_question or []) for traj in qt if traj]
+    if dist_group is None and not trajs:
+        return {"skipped": True}
+    # dist 下 rank0 即使 trajs 空也继续走到 broadcast（广播空 turn_meta），
+    # 否则其余 rank 会死等 —— skip 判断统一放在广播之后。
+
+    # 值预扫（更新前权重，micro-batch，rank0）→ GAE
     turn_meta = []  # (traj_idx, t, inp, out, old_lp, adv, ret, v_old)
     model.eval()
     flat_pairs, rows_by_traj = [], []
@@ -343,10 +358,25 @@ def ppo_update(
         for t, (inp, out, old_lp) in enumerate(unpacked):
             turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
 
-    adv_flat = torch.tensor([m[5] for m in turn_meta], dtype=torch.float32)
-    adv_norm = normalize_advantages(adv_flat)
-    for m, a in zip(turn_meta, adv_norm.tolist()):
-        m[5] = a
+    if turn_meta:
+        adv_flat = torch.tensor([m[5] for m in turn_meta], dtype=torch.float32)
+        adv_norm = normalize_advantages(adv_flat)
+        for m, a in zip(turn_meta, adv_norm.tolist()):
+            m[5] = a
+
+    if dist_group is not None:
+        import torch.distributed as dist
+        # turn_meta 的 tensor 全在 CPU/或搬到 CPU 再广播（pickle 走 object list）
+        if rank == 0:
+            payload = [[ti, t, inp.cpu(), out.cpu(), old_lp.cpu(), adv, ret, v_old]
+                       for ti, t, inp, out, old_lp, adv, ret, v_old in turn_meta]
+        else:
+            payload = None
+        box = [payload]
+        dist.broadcast_object_list(box, src=0, group=dist_group)
+        turn_meta = box[0]
+    if not turn_meta:
+        return {"skipped": True}
 
     stats = {"policy_loss": 0.0, "value_loss": 0.0, "kl": 0.0, "clip_frac": 0.0, "n_turns": len(turn_meta)}
     model.train()
@@ -357,6 +387,8 @@ def ppo_update(
         # 长度排序减 padding 浪费；梯度是全和，顺序无关
         order = sorted(range(len(turn_meta)),
                        key=lambda j: turn_meta[j][2].numel() + turn_meta[j][3].numel())
+        if world > 1:
+            order = order[rank::world]  # 长度排序后交错取 → 各 rank 负载均衡
         for s0 in range(0, len(order), max(micro_turns, 1)):
             chunk = [turn_meta[j] for j in order[s0:s0 + max(micro_turns, 1)]]
             pairs = [(m[2], m[3]) for m in chunk]
@@ -393,11 +425,25 @@ def ppo_update(
                 stats["policy_loss"] += float(p_loss.detach()) / n_meta
                 stats["value_loss"] += float(v_loss.detach()) / n_meta
             (chunk_loss / n_meta).backward()
+        if dist_group is not None:
+            import torch.distributed as dist
+            for p_ in [p for p in model.parameters() if p.requires_grad] + list(vhead.parameters()):
+                if p_.grad is None:
+                    p_.grad = torch.zeros_like(p_)  # 参与方必须齐，否则 all_reduce 死锁
+                dist.all_reduce(p_.grad, op=dist.ReduceOp.SUM, group=dist_group)
         torch.nn.utils.clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad] + list(vhead.parameters()),
             max_grad_norm,
         )
         optimizer.step()
+    if dist_group is not None:
+        import torch.distributed as dist
+        keys = ["policy_loss", "value_loss", "kl", "clip_frac"]
+        buf = torch.tensor([stats[k] for k in keys], dtype=torch.float64,
+                           device=next(model.parameters()).device)
+        dist.all_reduce(buf, op=dist.ReduceOp.SUM, group=dist_group)
+        for k, v in zip(keys, buf.tolist()):
+            stats[k] = v
     rets_t = torch.tensor([m[6] for m in turn_meta])
     vals_t = torch.tensor([m[7] for m in turn_meta])
     stats["explained_variance"] = explained_variance(rets_t, vals_t)
