@@ -129,12 +129,16 @@ def main() -> None:
         if str(extra) not in sys.path:
             sys.path.insert(0, str(extra))
 
+    import datetime
+
     import torch.distributed as dist
 
     dist_group = None
     rank = 0
     if world > 1:
-        dist.init_process_group("nccl")
+        # rank0 独占引擎加载/export/lora_check（首次可 >10min），其余 rank 在
+        # barrier/broadcast 等待 —— 默认 600s 会误杀，放大到 60min。
+        dist.init_process_group("nccl", timeout=datetime.timedelta(minutes=60))
         dist_group = dist.group.WORLD
         rank = dist.get_rank()
         torch.cuda.set_device(0)  # 每进程 CUDA_VISIBLE_DEVICES 已 pin 单卡
