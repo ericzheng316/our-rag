@@ -17,6 +17,8 @@ from ppo_rsf_vllm_v8 import (
     _turn_forward,
     _turns_forward_batched,
     make_value_head,
+    ppo_update,
+    value_feat_dim,
     clipped_value_loss,
     explained_variance,
     gae_advantages,
@@ -200,6 +202,63 @@ class MicroBatchEquivalenceTest(unittest.TestCase):
         loss.backward()
         self.assertIsNotNone(self.model.lm_head.weight.grad)
         self.assertGreater(float(self.model.lm_head.weight.grad.abs().sum()), 0.0)
+
+
+class GroupBaselineModeTest(unittest.TestCase):
+    """组基线 / 影子 / 特征收集的端到端行为（fake 模型）。"""
+
+    def _setup(self, feat_dim=16):
+        model = _FakeCausalLM()
+        for p_ in model.parameters():
+            p_.requires_grad_(True)
+        vhead = MLPValueHead(feat_dim, 8)
+        opt = torch.optim.AdamW(
+            [{"params": model.parameters(), "lr": 1e-3},
+             {"params": vhead.parameters(), "lr": 1e-3}])
+        g = torch.Generator().manual_seed(4)
+
+        def turn(li, lo, r):
+            return (torch.randint(0, 64, (li,), generator=g),
+                    torch.randint(0, 64, (lo,), generator=g), r, None, 0.7)
+        # 2 题 × 2 rollouts：组内有对比（1.0 vs 0.0）
+        trajs = [[turn(6, 3, -0.005), turn(8, 2, 1.0)],
+                 [turn(6, 3, -0.005), turn(7, 2, 0.0)],
+                 [turn(5, 2, 1.0)],
+                 [turn(5, 3, 0.0)]]
+        gids = ["qA", "qA", "qB", "qB"]
+        return model, vhead, opt, [[t] for t in trajs], gids
+
+    def _kw(self):
+        return dict(gamma=0.99, gae_lambda=0.95, clip_eps=0.2, value_clip=0.2,
+                    value_coef=0.5, kl_coef=0.0, entropy_coef=0.0, ppo_epochs=1,
+                    max_grad_norm=1.0, max_engine_logprob_mae=None,
+                    micro_turns=1, scan_batch=4)
+
+    def test_group_baseline_with_collect(self):
+        model, vhead, opt, trajs, gids = self._setup(feat_dim=32)  # pool_last_ln = 2*hidden
+        stats = ppo_update(model, vhead, opt, trajs, group_ids=gids,
+                           group_baseline=True, value_variant="pool_last_ln",
+                           collect_value_samples=True, **self._kw())
+        self.assertEqual(stats["n_turns"], 6)
+        feats, G = stats["value_samples"]
+        self.assertEqual(tuple(feats.shape), (6, 32))  # 2*hidden=32
+        self.assertEqual(G.numel(), 6)
+        self.assertTrue(any(abs(float(x) - 1.0) < 0.05 for x in G))
+
+    def test_shadow_freezes_vhead_in_main_loss(self):
+        model, vhead, opt, trajs, gids = self._setup()
+        before = {k: v.clone() for k, v in vhead.state_dict().items()}
+        ppo_update(model, vhead, opt, trajs, group_ids=gids,
+                   group_baseline=True, train_value=False,
+                   value_variant="last", **self._kw())
+        for k, v in vhead.state_dict().items():
+            self.assertTrue(torch.equal(before[k], v),
+                            f"影子模式下 vhead.{k} 不应被主循环更新")
+
+    def test_feat_dim_helper(self):
+        self.assertEqual(value_feat_dim(4096, "last"), 4096)
+        self.assertEqual(value_feat_dim(4096, "pool_last"), 8192)
+        self.assertEqual(value_feat_dim(4096, "pool_last_ln"), 8192)
 
 
 if __name__ == "__main__":

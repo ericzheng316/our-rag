@@ -74,7 +74,22 @@ def build_parser():
     p.add_argument("--clip_eps", type=float, default=0.2)
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
-    p.add_argument("--kl_coef", type=float, default=0.01)
+    p.add_argument("--kl_coef", type=float, default=0.05,
+                   help="0.01 在 48ep run 里拉不住漂移（KL>0.10 后 em 崩）；无自动早停，KL 由人工盯")
+    p.add_argument("--vhead_init", default="",
+                   help="critic 热启动权重（fit_value_head.py 产物）；不给则零初始化")
+    p.add_argument("--value_feat", default="pool_last_ln",
+                   choices=["last", "pool_last", "pool_last_ln"],
+                   help="必须与热启动回归的最优变体一致")
+    p.add_argument("--shadow_critic", type=int, default=0,
+                   help="1 = critic 影子模式（v_loss 不进主 loss，只吃回放池；"
+                        "版本 B 配 --group_baseline 1 用）")
+    p.add_argument("--group_baseline", type=int, default=0,
+                   help="1 = advantage 用同题组内 z-score（备用开关；默认 GAE+critic）")
+    p.add_argument("--replay_eps", type=int, default=10,
+                   help="critic 回放池保留最近 N ep 的 (feat,G)")
+    p.add_argument("--replay_epochs", type=int, default=3)
+    p.add_argument("--replay_batch", type=int, default=512)
     p.add_argument("--micro_turns", type=int, default=1,
                    help="带梯度 forward+backward 合并 turn 数（实测 >1 在 seq~2k OOM）")
     p.add_argument("--scan_batch", type=int, default=8,
@@ -212,7 +227,20 @@ def main() -> None:
     model.set_adapter("default")
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
-    vhead = make_value_head(model.config.hidden_size, args.critic_hidden).to(model.device)
+    from ppo_rsf_vllm_v8 import value_feat_dim
+    feat_dim = value_feat_dim(model.config.hidden_size, args.value_feat)
+    vhead = make_value_head(feat_dim, args.critic_hidden).to(model.device)
+    if args.vhead_init:
+        blob = torch.load(args.vhead_init, map_location="cpu")
+        # fit_value_head 的 net 是 Sequential(Linear,Tanh,Linear)，与
+        # MLPValueHead.net 同构；变体必须一致，维度不匹配会在此直接报错。
+        vhead.net.load_state_dict(blob["state_dict"])
+        log(f"critic 热启动: variant={blob.get('variant')} "
+            f"heldout_ev={blob.get('heldout_ev', float('nan')):.3f}")
+    from collections import deque
+    replay = deque(maxlen=args.replay_eps)
+    vhead_opt = torch.optim.AdamW(vhead.parameters(), lr=args.critic_lr,
+                                  weight_decay=1e-4)
     optimizer = torch.optim.AdamW([
         {"params": [p for p in model.parameters() if p.requires_grad], "lr": args.lr},
         {"params": vhead.parameters(), "lr": args.critic_lr},
@@ -275,7 +303,7 @@ def main() -> None:
     metrics_path = Path(args.save_path) / "online_metrics_ppo_proto_v8.jsonl"
 
     def episodes_to_trajs(episodes):
-        trajs, skipped_long = [], 0
+        trajs, traj_tasks, skipped_long = [], [], 0
         stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0}
         for ep in episodes:
             golds = golds_by_task.get(ep.task_id, [ep.gold_answer])
@@ -308,7 +336,8 @@ def main() -> None:
                                     reward, None, args.rollout_temperature))
             if turn_tuples:
                 trajs.append(turn_tuples)
-        return trajs, stats, skipped_long
+                traj_tasks.append(ep.task_id)
+        return trajs, traj_tasks, stats, skipped_long
 
     for episode_idx in range(args.num_episodes):
         lo = (episode_idx * args.batch_size) % len(rows)
@@ -316,7 +345,7 @@ def main() -> None:
         dup = [t for t in batch for _ in range(args.n_rollouts)]
 
         t0 = time.time()
-        episodes, trajs, ep_stats, skipped_long = [], [], None, 0
+        episodes, trajs, traj_tasks, ep_stats, skipped_long = [], [], [], None, 0
         if rank == 0:
             episodes = run_episodes_batched(
                 dup,
@@ -329,7 +358,7 @@ def main() -> None:
                 docs_per_search=args.docs_per_search,
                 batched_retrieve_fn=batched_retrieve,
             )
-            trajs, ep_stats, skipped_long = episodes_to_trajs(episodes)
+            trajs, traj_tasks, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
 
         t1 = time.time()
@@ -343,8 +372,35 @@ def main() -> None:
             max_engine_logprob_mae=None,
             micro_turns=args.micro_turns, scan_batch=args.scan_batch,
             dist_group=dist_group,
+            group_ids=traj_tasks, group_baseline=bool(args.group_baseline),
+            value_variant=args.value_feat,
+            train_value=not args.shadow_critic,
+            collect_value_samples=True,
         )
         update_s = time.time() - t1
+
+        # ── critic 跨 ep 回放池（owner 2026-08-06 批准）────────────────────
+        vs_new = stats.pop("value_samples", None)
+        replay_ev = float("nan")
+        if rank == 0 and vs_new is not None:
+            replay.append(vs_new)
+            X = torch.cat([f for f, _g in replay]).float().to(model.device)
+            y = torch.cat([g for _f, g in replay]).to(model.device)
+            for _ in range(args.replay_epochs):
+                perm = torch.randperm(X.shape[0], device=X.device)
+                for s0 in range(0, X.shape[0], args.replay_batch):
+                    idx = perm[s0:s0 + args.replay_batch]
+                    loss_v = (vhead(X[idx]) - y[idx]) ** 2
+                    vhead_opt.zero_grad()
+                    loss_v.mean().backward()
+                    vhead_opt.step()
+            with torch.no_grad():
+                pred = vhead(X[:4096])
+                yy = y[:4096]
+                replay_ev = float(1 - (yy - pred).var() / (yy.var() + 1e-12))
+        if dist_group is not None:
+            for p_ in vhead.parameters():
+                dist.broadcast(p_.data, src=0)
 
         step += 1
         if rank != 0:
@@ -363,6 +419,7 @@ def main() -> None:
             "skipped_long_prompts": skipped_long,
             "rollout_s": round(rollout_s, 1),
             "update_s": round(update_s, 1),
+            "replay_ev": replay_ev,
             **{k: v for k, v in stats.items() if isinstance(v, (int, float))},
         }
         with metrics_path.open("a", encoding="utf-8") as fh:
@@ -370,6 +427,7 @@ def main() -> None:
         log(f"ep {episode_idx+1:4d} R={mean_r:+.3f} em={record['alias_em']:.3f} "
             f"ans={record['answer_rate']:.2f} inv={record['invalid_rate']:.2f} "
             f"ev={stats.get('explained_variance', float('nan')):.3f} "
+            f"rev={replay_ev:.3f} "
             f"[{rollout_s:.0f}s+{update_s:.0f}s]")
 
         if step % args.save_steps == 0 or episode_idx + 1 == args.num_episodes:

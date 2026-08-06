@@ -190,8 +190,25 @@ def _split_lm(model):
     return base.model, base.lm_head
 
 
+def _value_feature(h_row, li: int, variant: str):
+    """value 特征。variant: last(4096) / pool_last(8192) / pool_last_ln(8192)。
+    LN 治 tanh 饱和（LLM hidden 范数大，W1x 过饱和是塌缩帮凶——模拟实测
+    饱和率 52-67%）。"""
+    if variant == "last":
+        return h_row[li - 1]
+    feat = torch.cat([h_row[:li].mean(0), h_row[li - 1]])
+    if variant == "pool_last_ln":
+        feat = torch.nn.functional.layer_norm(feat.float(), (feat.numel(),))
+    return feat
+
+
+def value_feat_dim(hidden_size: int, variant: str) -> int:
+    return hidden_size if variant == "last" else 2 * hidden_size
+
+
 def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
-                           want_entropy: bool = False):
+                           want_entropy: bool = False, value_variant: str = "last",
+                           feat_sink=None):
     """micro-batch 版 _turn_forward：一次 forward 处理多个 turn 样本。
 
     显存关键（2026-08-05 实测教训）：CausalLM 完整调用物化 [B,T,V] logits，
@@ -211,7 +228,10 @@ def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
             li, lo = lens[b]
             rows = lm_head(hidden[b, li - 1: li + lo - 1]).float()
             token_lps.append(_gather_completion_logprobs(rows, out.to(device)))
-            values.append(vhead(hidden[b, li - 1]))
+            feat = _value_feature(hidden[b], li, value_variant)
+            if feat_sink is not None:
+                feat_sink.append(feat.detach().half().cpu())
+            values.append(vhead(feat))
             if want_entropy:
                 logp = torch.log_softmax(rows, dim=-1)
                 entropies.append(-(logp.exp() * logp).sum(-1).mean())
@@ -294,6 +314,11 @@ def ppo_update(
     micro_turns: int = 1,
     scan_batch: int = 8,
     dist_group=None,
+    group_ids=None,
+    group_baseline: bool = False,
+    value_variant: str = "last",
+    train_value: bool = True,
+    collect_value_samples: bool = False,
 ) -> dict:
     """One PPO update over a rollout batch.
 
@@ -309,7 +334,16 @@ def ppo_update(
     负载均衡）；backward 后手动 all-reduce 所有可训参数梯度（SUM——每样本
     loss 已 /N_total，SUM 即全量梯度），每 rank 各自 step。初始权重一致 +
     梯度 bit 一致（NCCL 同结果）+ AdamW 无随机 ⇒ 权重保持一致；trajs 只需
-    rank0 提供。"""
+    rank0 提供。
+
+    组基线（诊断 2026-08-06：组间方差 76.2%，critic 塌缩常数）：
+    ``group_baseline=True`` 时 advantage = 同题组内 z-score 的总回报广播到全
+    turn（GRPO 式；v5"广播毁密集 reward"的教训不适用——v8 reward 是终末 em
+    + 微小成本）。``train_value=False`` = critic 影子模式：主 loss 不含
+    v_loss（critic 由 trainer 的跨 ep 回放池独立回归），预扫仍算 V 报 ev。
+    ``collect_value_samples=True`` 时 stats["value_samples"] = (feats fp16
+    CPU, G)——预扫顺带产出，供回放池。``value_variant``:
+    last / pool_last / pool_last_ln，必须与热启动回归的最优变体一致。"""
     from grpo_rsf_simple import _unpack_turn
     from grpo_estimator_v2 import engine_hf_logprob_mae
 
@@ -333,9 +367,11 @@ def ppo_update(
         rows_by_traj.append(rows)
         flat_pairs.extend((inp, out) for inp, out, _r, _e, _t in rows)
     flat_lp, flat_v = [], []
+    feat_sink = [] if collect_value_samples else None
     for s0 in range(0, len(flat_pairs), max(scan_batch, 1)):
         lps, vs, _ = _turns_forward_batched(
-            model, vhead, flat_pairs[s0:s0 + max(scan_batch, 1)], need_grad=False)
+            model, vhead, flat_pairs[s0:s0 + max(scan_batch, 1)], need_grad=False,
+            value_variant=value_variant, feat_sink=feat_sink)
         flat_lp.extend(lps)
         flat_v.extend(float(v) for v in vs)
     idx = 0
@@ -354,11 +390,30 @@ def ppo_update(
             rewards.append(float(r))
             values.append(v)
             unpacked.append((inp, out, old_lp.detach()))
-        advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
+        if group_baseline:
+            # MC 折扣回报（values=0 的 GAE 即 G_t）——advantage 稍后组内
+            # z-score 覆盖；G_t 兼作 critic 回归标签。
+            advs, rets = gae_advantages(rewards, [0.0] * len(values), gamma, 1.0)
+        else:
+            advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
         for t, (inp, out, old_lp) in enumerate(unpacked):
             turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
 
-    if turn_meta:
+    if turn_meta and group_baseline:
+        import collections
+        g_of = {ti: (group_ids[ti] if group_ids is not None else 0)
+                for ti in {m[0] for m in turn_meta}}
+        ret0 = {m[0]: float(m[5]) for m in turn_meta if m[1] == 0}
+        by_g = collections.defaultdict(list)
+        for ti, v in ret0.items():
+            by_g[g_of[ti]].append(v)
+        gm = {g: sum(v) / len(v) for g, v in by_g.items()}
+        gs = {g: (sum((x - gm[g]) ** 2 for x in v) / len(v)) ** 0.5
+              for g, v in by_g.items()}
+        for m in turn_meta:
+            g = g_of[m[0]]
+            m[5] = (ret0[m[0]] - gm[g]) / (gs[g] + 1e-6)  # 广播到该轨迹全部 turn
+    elif turn_meta:
         adv_flat = torch.tensor([m[5] for m in turn_meta], dtype=torch.float32)
         adv_norm = normalize_advantages(adv_flat)
         for m, a in zip(turn_meta, adv_norm.tolist()):
@@ -394,7 +449,7 @@ def ppo_update(
             pairs = [(m[2], m[3]) for m in chunk]
             new_lps, v_news, ents = _turns_forward_batched(
                 model, vhead, pairs, need_grad=True,
-                want_entropy=entropy_coef > 0.0)
+                want_entropy=entropy_coef > 0.0, value_variant=value_variant)
             ref_lps = (_reference_logprobs_batched(model, pairs)
                        if kl_coef > 0.0 else [None] * len(chunk))
             chunk_loss = None
@@ -403,13 +458,17 @@ def ppo_update(
                 _ti, _t, _inp, _out, old_lp, adv, ret, v_old = m
                 adv_t = torch.tensor(adv, dtype=torch.float32, device=device)
                 p_loss = ppo_policy_loss(new_lp, old_lp.to(device), adv_t, clip_eps)
-                v_loss = clipped_value_loss(
-                    v_new,
-                    torch.tensor(v_old, dtype=torch.float32, device=device),
-                    torch.tensor(ret, dtype=torch.float32, device=device),
-                    value_clip,
-                )
-                loss = p_loss + value_coef * v_loss
+                if train_value:
+                    v_loss = clipped_value_loss(
+                        v_new,
+                        torch.tensor(v_old, dtype=torch.float32, device=device),
+                        torch.tensor(ret, dtype=torch.float32, device=device),
+                        value_clip,
+                    )
+                    loss = p_loss + value_coef * v_loss
+                else:
+                    v_loss = torch.tensor(0.0)  # 影子模式：critic 走回放池
+                    loss = p_loss
                 if ref_lp is not None:
                     kl_term = (new_lp - ref_lp.to(device)).mean()
                     loss = loss + kl_coef * kl_term
@@ -447,6 +506,10 @@ def ppo_update(
     rets_t = torch.tensor([m[6] for m in turn_meta])
     vals_t = torch.tensor([m[7] for m in turn_meta])
     stats["explained_variance"] = explained_variance(rets_t, vals_t)
+    if collect_value_samples and rank == 0 and feat_sink:
+        stats["value_samples"] = (torch.stack(feat_sink),
+                                  torch.tensor([m[6] for m in turn_meta],
+                                               dtype=torch.float32))
     return stats
 
 
