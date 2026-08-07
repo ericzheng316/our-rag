@@ -38,6 +38,13 @@ class TurnRecord:
     doc_ids: List[str]
     raw_text: str
     invalid_reason: Optional[str] = None
+    doc_titles: List[str] = field(default_factory=list)  # wiki18 contents 首行
+
+
+def _title_of(contents: str) -> str:
+    """FlashRAG wiki18 格式 '"Title"\ntext' 的首行 title，规范化小写。"""
+    head = str(contents).split("\n", 1)[0].strip().strip('"')
+    return " ".join(head.split()).lower()
 
 
 @dataclass
@@ -208,7 +215,8 @@ def run_episodes_batched(
                     docs = state["retrieve"](action.query, docs_per_search)
                 result.turns.append(TurnRecord(
                     turn_index, "search", action.slot, action.query, action.plan,
-                    [str(d.get("id", "")) for d in docs], raw))
+                    [str(d.get("id", "")) for d in docs], raw,
+                    doc_titles=[_title_of(d.get("contents", "")) for d in docs]))
                 result.n_searches += 1
                 state["messages"].append({
                     "role": "user",

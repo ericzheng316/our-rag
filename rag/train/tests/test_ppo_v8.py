@@ -13,6 +13,7 @@ import torch
 
 from ppo_rsf_vllm_v8 import (
     MLPValueHead,
+    coverage_shaping,
     ValueHead,
     _turn_forward,
     _turns_forward_batched,
@@ -202,6 +203,51 @@ class MicroBatchEquivalenceTest(unittest.TestCase):
         loss.backward()
         self.assertIsNotNone(self.model.lm_head.weight.grad)
         self.assertGreater(float(self.model.lm_head.weight.grad.abs().sum()), 0.0)
+
+
+class CoverageShapingTest(unittest.TestCase):
+    def test_increment_and_no_double_count(self):
+        gold = ["a", "b", "c", "d"]
+        turns = [["a", "x"], ["a", "b"], [], ["c", "d"]]
+        shp = coverage_shaping(turns, gold, beta=0.4)
+        # turn0 新覆盖 a → 0.4*1/4；turn1 a 重复不计,b 新 → 0.4*1/4；
+        # turn2 无；turn3 c,d → 0.4*2/4
+        self.assertAlmostEqual(shp[0], 0.1)
+        self.assertAlmostEqual(shp[1], 0.1)
+        self.assertAlmostEqual(shp[2], 0.0)
+        self.assertAlmostEqual(shp[3], 0.2)
+        self.assertAlmostEqual(sum(shp), 0.4)  # 全覆盖 → 净值 = beta
+
+    def test_no_gold_no_shaping(self):
+        self.assertEqual(coverage_shaping([["x"], ["y"]], [], 0.4), [0.0, 0.0])
+
+
+class LOOAdvantageTest(unittest.TestCase):
+    def test_loo_math_via_ppo_update(self):
+        """2 题 × 2 rollouts,已知回报,LOO 基线 = 组内另一条的 R。"""
+        model = _FakeCausalLM()
+        for p_ in model.parameters():
+            p_.requires_grad_(True)
+        vhead = MLPValueHead(16, 8)
+        opt = torch.optim.AdamW(model.parameters(), lr=0.0)  # 冻结,只验数学不动权重
+        g = torch.Generator().manual_seed(9)
+
+        def turn(r):
+            return (torch.randint(0, 64, (5,), generator=g),
+                    torch.randint(0, 64, (3,), generator=g), r, None, 0.7)
+        trajs = [[[turn(1.0)]], [[turn(0.0)]], [[turn(0.5)]], [[turn(0.5)]]]
+        gids = ["qA", "qA", "qB", "qB"]
+        stats = ppo_update(model, vhead, opt, trajs, group_ids=gids,
+                           adv_mode="loo", value_variant="last",
+                           gamma=0.99, gae_lambda=0.95, clip_eps=0.2,
+                           value_clip=0.2, value_coef=0.5, kl_coef=0.0,
+                           entropy_coef=0.0, ppo_epochs=1, max_grad_norm=1.0,
+                           max_engine_logprob_mae=None, micro_turns=1,
+                           scan_batch=4)
+        # qA: adv = 1−0 = +1 和 0−1 = −1;qB: 0.5−0.5 = 0 两条
+        # ratio=1 时 policy_loss = −mean(adv) = −(1−1+0+0)/4 = 0
+        self.assertEqual(stats["n_turns"], 4)
+        self.assertAlmostEqual(stats["policy_loss"], 0.0, places=4)
 
 
 class GroupBaselineModeTest(unittest.TestCase):

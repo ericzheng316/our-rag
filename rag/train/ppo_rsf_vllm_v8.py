@@ -159,6 +159,28 @@ def _turn_forward(model, vhead, inp_ids, out_ids, need_grad: bool):
     return token_lp, value
 
 
+def coverage_shaping(doc_titles_per_turn, gold_titles, beta: float):
+    """gold 支撑段落覆盖的过程 reward(owner 设计 2026-08-06)。
+
+    r_t += beta * |本 turn 新覆盖的 gold titles| / |gold titles|。
+    注意这是**非势函数**的直接增量:严格势函数 γΦ′−Φ 在轨迹级 LOO 广播下
+    被 telescope 抵消成端差,对 R_i 无区分度——而"覆盖 gold"正是想奖励的
+    行为本身,故意保留净值(轨迹总 shaping = beta × 最终覆盖率)。防 hack:
+    覆盖按集合计(重复检索同段不加分),检索本身有成本,终末 em 仍是大头。
+    title 匹配是精确字符串(小写规范化),零 judge、零 hack 面。
+    """
+    if not gold_titles:
+        return [0.0] * len(doc_titles_per_turn)
+    gold = {str(t) for t in gold_titles}
+    covered: set = set()
+    out = []
+    for titles in doc_titles_per_turn:
+        new = ({str(t) for t in titles} & gold) - covered
+        covered |= new
+        out.append(beta * len(new) / len(gold))
+    return out
+
+
 def _pad_batch(pairs, device):
     """right-pad [(inp, out), ...] → (full[B,T], mask[B,T], lens[(li,lo)])。
 
@@ -196,6 +218,8 @@ def _value_feature(h_row, li: int, variant: str):
     饱和率 52-67%）。"""
     if variant == "last":
         return h_row[li - 1]
+    if variant == "pool":
+        return h_row[:li].mean(0)
     feat = torch.cat([h_row[:li].mean(0), h_row[li - 1]])
     if variant == "pool_last_ln":
         feat = torch.nn.functional.layer_norm(feat.float(), (feat.numel(),))
@@ -203,7 +227,7 @@ def _value_feature(h_row, li: int, variant: str):
 
 
 def value_feat_dim(hidden_size: int, variant: str) -> int:
-    return hidden_size if variant == "last" else 2 * hidden_size
+    return hidden_size if variant in ("last", "pool") else 2 * hidden_size
 
 
 def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
@@ -316,6 +340,7 @@ def ppo_update(
     dist_group=None,
     group_ids=None,
     group_baseline: bool = False,
+    adv_mode: str = "",
     value_variant: str = "last",
     train_value: bool = True,
     collect_value_samples: bool = False,
@@ -352,6 +377,8 @@ def ppo_update(
         import torch.distributed as dist
         rank, world = dist.get_rank(), dist.get_world_size()
 
+    if not adv_mode:
+        adv_mode = "group_z" if group_baseline else "gae"
     trajs = [traj for qt in (trajs_per_question or []) for traj in qt if traj]
     if dist_group is None and not trajs:
         return {"skipped": True}
@@ -390,16 +417,33 @@ def ppo_update(
             rewards.append(float(r))
             values.append(v)
             unpacked.append((inp, out, old_lp.detach()))
-        if group_baseline:
-            # MC 折扣回报（values=0 的 GAE 即 G_t）——advantage 稍后组内
-            # z-score 覆盖；G_t 兼作 critic 回归标签。
+        if adv_mode in ("group_z", "loo"):
+            # MC 折扣回报（values=0 的 GAE 即 G_t）——advantage 稍后按模式
+            # 覆盖；G_t 兼作 critic 回归标签。
             advs, rets = gae_advantages(rewards, [0.0] * len(values), gamma, 1.0)
         else:
             advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
         for t, (inp, out, old_lp) in enumerate(unpacked):
             turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
 
-    if turn_meta and group_baseline:
+    if turn_meta and adv_mode == "loo":
+        # RLOO:baseline_i = 其他 K−1 条的均值;一行减法,广播到全 turn。
+        import collections
+        g_of = {ti: (group_ids[ti] if group_ids is not None else 0)
+                for ti in {m[0] for m in turn_meta}}
+        ret0 = {m[0]: float(m[5]) for m in turn_meta if m[1] == 0}
+        sums = collections.Counter()
+        cnts = collections.Counter()
+        for ti, v in ret0.items():
+            sums[g_of[ti]] += v
+            cnts[g_of[ti]] += 1
+        for m in turn_meta:
+            ti = m[0]
+            g = g_of[ti]
+            k = cnts[g]
+            b = (sums[g] - ret0[ti]) / (k - 1) if k > 1 else 0.0
+            m[5] = ret0[ti] - b
+    elif turn_meta and adv_mode == "group_z":
         import collections
         g_of = {ti: (group_ids[ti] if group_ids is not None else 0)
                 for ti in {m[0] for m in turn_meta}}

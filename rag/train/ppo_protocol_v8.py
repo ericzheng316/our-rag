@@ -79,13 +79,18 @@ def build_parser():
     p.add_argument("--vhead_init", default="",
                    help="critic 热启动权重（fit_value_head.py 产物）；不给则零初始化")
     p.add_argument("--value_feat", default="pool_last_ln",
-                   choices=["last", "pool_last", "pool_last_ln"],
+                   choices=["last", "pool", "pool_last", "pool_last_ln"],
                    help="必须与热启动回归的最优变体一致")
     p.add_argument("--shadow_critic", type=int, default=0,
                    help="1 = critic 影子模式（v_loss 不进主 loss，只吃回放池；"
                         "版本 B 配 --group_baseline 1 用）")
+    p.add_argument("--adv_mode", default="loo", choices=["gae", "group_z", "loo"],
+                   help="loo = RLOO（同题 K-1 均值基线，一行减法广播）；"
+                        "group_z = 组内 z-score；gae = critic 参与")
+    p.add_argument("--shaping_beta", type=float, default=0.3,
+                   help="gold 支撑段落覆盖增量的系数（title 精确匹配，0 关闭）")
     p.add_argument("--group_baseline", type=int, default=0,
-                   help="1 = advantage 用同题组内 z-score（备用开关；默认 GAE+critic）")
+                   help="[兼容] 1 等价 --adv_mode group_z")
     p.add_argument("--replay_eps", type=int, default=10,
                    help="critic 回放池保留最近 N ep 的 (feat,G)")
     p.add_argument("--replay_epochs", type=int, default=3)
@@ -161,7 +166,7 @@ def main() -> None:
     from agent.episode import run_episodes_batched
     from belief.acec.answer_verifier_v64 import answer_exact_match
     from engine_pool import EnginePool
-    from ppo_rsf_vllm_v8 import make_value_head, ppo_update
+    from ppo_rsf_vllm_v8 import coverage_shaping, make_value_head, ppo_update
     from vllm_adapter_export import export_for_vllm
 
     def log(msg: str) -> None:
@@ -179,11 +184,13 @@ def main() -> None:
                 continue
             rows.append({"task_id": str(r.get("id", len(rows))),
                          "question": str(r["question"]),
-                         "answer": golds[0], "golds": golds})
+                         "answer": golds[0], "golds": golds,
+                         "gold_titles": [str(t) for t in (r.get("gold_titles") or [])]})
     random.Random(args.seed).shuffle(rows)
     if args.max_samples > 0:
         rows = rows[: args.max_samples]
     golds_by_task = {t["task_id"]: t["golds"] for t in rows}
+    gold_titles_by_task = {t["task_id"]: t["gold_titles"] for t in rows}
     log(f"tasks={len(rows)}")
 
     retrieve_url = args.retrieve_url or os.environ.get("RETRIEVE_URL", "")
@@ -304,9 +311,13 @@ def main() -> None:
 
     def episodes_to_trajs(episodes):
         trajs, traj_tasks, skipped_long = [], [], 0
-        stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0}
+        stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0,
+                 "shaping_sum": 0.0}
         for ep in episodes:
             golds = golds_by_task.get(ep.task_id, [ep.gold_answer])
+            shp = coverage_shaping(
+                [t.doc_titles for t in ep.turns],
+                gold_titles_by_task.get(ep.task_id, []), args.shaping_beta)
             turn_tuples = []
             asst_positions = [i for i, m in enumerate(ep.messages)
                               if m["role"] == "assistant"]
@@ -330,8 +341,9 @@ def main() -> None:
                     reward = -args.format_penalty
                     stats["invalid"] += 1
                 else:
-                    reward = -args.retrieval_cost
+                    reward = -args.retrieval_cost + shp[i]
                     stats["searches"] += 1
+                    stats["shaping_sum"] += shp[i]
                 turn_tuples.append((inp.to(model.device), out.to(model.device),
                                     reward, None, args.rollout_temperature))
             if turn_tuples:
@@ -373,6 +385,7 @@ def main() -> None:
             micro_turns=args.micro_turns, scan_batch=args.scan_batch,
             dist_group=dist_group,
             group_ids=traj_tasks, group_baseline=bool(args.group_baseline),
+            adv_mode=args.adv_mode,
             value_variant=args.value_feat,
             train_value=not args.shadow_critic,
             collect_value_samples=True,
@@ -415,6 +428,7 @@ def main() -> None:
             "answer_rate": ep_stats["answered"] / n_ep,
             "alias_em": ep_stats["em_sum"] / max(ep_stats["answered"], 1),
             "mean_searches": ep_stats["searches"] / n_ep,
+            "mean_shaping": ep_stats["shaping_sum"] / n_ep,
             "invalid_rate": ep_stats["invalid"] / n_ep,
             "skipped_long_prompts": skipped_long,
             "rollout_s": round(rollout_s, 1),
@@ -427,7 +441,7 @@ def main() -> None:
         log(f"ep {episode_idx+1:4d} R={mean_r:+.3f} em={record['alias_em']:.3f} "
             f"ans={record['answer_rate']:.2f} inv={record['invalid_rate']:.2f} "
             f"ev={stats.get('explained_variance', float('nan')):.3f} "
-            f"rev={replay_ev:.3f} "
+            f"rev={replay_ev:.3f} shp={record['mean_shaping']:.3f} "
             f"[{rollout_s:.0f}s+{update_s:.0f}s]")
 
         if step % args.save_steps == 0 or episode_idx + 1 == args.num_episodes:
