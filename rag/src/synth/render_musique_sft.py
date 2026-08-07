@@ -50,6 +50,10 @@ from agent.protocol_v1 import SYSTEM_PROMPT  # noqa: E402
 _REF = re.compile(r"#(\d+)")
 
 
+def _norm_t(t: str) -> str:
+    return re.sub(r"\s+", " ", str(t)).strip().lower()
+
+
 def _resolve_refs(text: str, prev_answers: List[str]) -> str:
     """Replace positional #N with the actual answer of step N (1-indexed)."""
     def sub(m: "re.Match[str]") -> str:
@@ -69,8 +73,26 @@ def _doc(p: Dict[str, Any], max_chars: int) -> str:
     return f"{p.get('title', '')}. {body}"
 
 
+def degrade_query(query: str, prev_answers: List[str]) -> str | None:
+    """按实测主导失败型（unbound）退化：把已解析进查询的桥接实体抹回占位。
+    没有可抹的实体时退化为"只留关系短语"（截掉主语）。返回 None = 无法退化。"""
+    out = query
+    hit = False
+    for i, a in enumerate(prev_answers):
+        if a and a in out:
+            out = out.replace(a, f"the answer from step {i + 1}")
+            hit = True
+    if hit:
+        return out
+    parts = query.split(">>")
+    if len(parts) == 2 and parts[1].strip():
+        return parts[1].strip()  # 只留关系短语（vague 型）
+    return None
+
+
 def render_record(rec: Dict[str, Any], rng: random.Random,
-                  docs_per_result: int, max_doc_chars: int) -> Dict[str, Any] | None:
+                  docs_per_result: int, max_doc_chars: int,
+                  inject_rewrite: float = 0.0) -> Dict[str, Any] | None:
     steps = rec.get("question_decomposition") or []
     paras = rec.get("paragraphs") or []
     answer = str(rec.get("answer", "")).strip()
@@ -89,14 +111,49 @@ def render_record(rec: Dict[str, Any], rng: random.Random,
     ]
 
     prev_answers: List[str] = []
+    skip_turns: List[int] = []
+    asst_i = -1
+    # 选一个可注入的跳（有前序实体的跳优先 = unbound 型可构造）
+    inject_at = -1
+    if inject_rewrite > 0 and rng.random() < inject_rewrite:
+        candidates = [i for i in range(1, len(steps))]
+        rng.shuffle(candidates)
+        inject_at = candidates[0] if candidates else -1
     for i, s in enumerate(steps):
         gold = by_idx.get(s.get("paragraph_support_idx"))
         if gold is None:
             return None  # 支撑段落缺失 —— 轨迹不完整，整题丢弃
         query = _resolve_refs(str(s["question"]).strip(), prev_answers)
+        if i == inject_at:
+            bad_q = degrade_query(query, prev_answers)
+            if bad_q is not None and bad_q != query:
+                # 确定性闸门：坏查询在本题闭池检索下确实 miss 全部 gold 段
+                from agent.episode import _title_of, pool_retriever
+                retr = pool_retriever({"pool": [
+                    {"id": f"p{p_['idx']}",
+                     "contents": f"\"{p_['title']}\"\n{p_['paragraph_text']}"}
+                    for p_ in paras]})
+                bad_docs = retr(bad_q, docs_per_result)
+                gold_titles = { _norm_t(p_["title"]) for p_ in paras
+                               if p_.get("is_supporting") }
+                if not ({_title_of(d["contents"]) for d in bad_docs} & gold_titles):
+                    action_bad = f'<search slot="{i + 1}">{bad_q}</search>'
+                    messages.append({"role": "assistant",
+                                     "content": f"{plan}\n{action_bad}" if i == 0
+                                     else action_bad})
+                    asst_i += 1
+                    skip_turns.append(asst_i)
+                    block = "\n---\n".join(
+                        _doc({"title": d["contents"].split("\n")[0].strip('"'),
+                              "paragraph_text": d["contents"].split("\n", 1)[-1]},
+                             max_doc_chars) for d in bad_docs)
+                    messages.append({"role": "user",
+                                     "content": f"<result>\n{block}\n</result>"})
         action = f'<search slot="{i + 1}">{query}</search>'
         messages.append({"role": "assistant",
-                         "content": f"{plan}\n{action}" if i == 0 else action})
+                         "content": f"{plan}\n{action}" if (i == 0 and asst_i < 0)
+                         else action})
+        asst_i += 1
 
         distractors = rng.sample(non_support,
                                  min(docs_per_result - 1, len(non_support)))
@@ -109,7 +166,7 @@ def render_record(rec: Dict[str, Any], rng: random.Random,
     messages.append({"role": "assistant", "content": f"<answer>{answer}</answer>"})
     fam = str(rec.get("id", "?")).split("__")[0]
     return {"task_id": str(rec["id"]), "k": len(steps), "family": fam,
-            "messages": messages}
+            "messages": messages, "skip_turns": skip_turns}
 
 
 def main() -> None:
@@ -121,6 +178,12 @@ def main() -> None:
                     help="2hop 截断上限（深链全收 —— 深度探索是目标）")
     ap.add_argument("--docs_per_result", type=int, default=3)
     ap.add_argument("--max_doc_chars", type=int, default=800)
+    ap.add_argument("--inject_rewrite", type=float, default=0.0,
+                    help="按此比例的题插入改写示范：程序退化查询（去桥接实体等，"
+                         "按引导实验实测 unbound 是主导失败型）→ 闭池检索器真实"
+                         "坏结果 → 同 slot 的 gold 子问题作为改写。坏查询 turn 记入"
+                         " skip_turns（context-only）。仅在退化查询确实检索不到"
+                         " gold（确定性判定）时插入。")
     ap.add_argument("--seed", type=int, default=20260805)
     args = ap.parse_args()
 
@@ -149,7 +212,8 @@ def main() -> None:
     with open(args.out, "w", encoding="utf-8") as out_fh, \
             open(args.tasks_out, "w", encoding="utf-8") as tasks_fh:
         for rec in picked:
-            traj = render_record(rec, rng, args.docs_per_result, args.max_doc_chars)
+            traj = render_record(rec, rng, args.docs_per_result,
+                                  args.max_doc_chars, args.inject_rewrite)
             if traj is None:
                 n_drop += 1
                 continue
