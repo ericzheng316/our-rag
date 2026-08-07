@@ -115,6 +115,10 @@ def build_parser():
     p.add_argument("--retrieve_chunk", type=int, default=128,
                    help="批量检索单次 POST 的 query 上限（保护 retriever）")
     p.add_argument("--format_penalty", type=float, default=0.2)
+    p.add_argument("--turn_limit_penalty", type=float, default=0.3,
+                   help="打满 max_turns 仍未作答的终局惩罚（放弃比答错更该罚："
+                        "此前无此分支，且 shaping 与检索次数正相关 → 只搜不答"
+                        "的 reward 高于尝试作答，正向奖励了无限改写循环）")
     p.add_argument("--answer_weight", type=float, default=1.0)
     p.add_argument("--save_steps", type=int, default=25)
     p.add_argument("--seed", type=int, default=20260805)
@@ -321,13 +325,16 @@ def main() -> None:
     def episodes_to_trajs(episodes):
         trajs, traj_tasks, traj_syms, skipped_long = [], [], [], 0
         stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0,
-                 "shaping_sum": 0.0}
+                 "shaping_sum": 0.0, "gave_up": 0}
         for ep in episodes:
             golds = golds_by_task.get(ep.task_id, [ep.gold_answer])
             g_titles = set(gold_titles_by_task.get(ep.task_id, []))
-            shp = coverage_shaping(
+            # 打满 turn 未作答 = 放弃：不发过程分（否则"只搜不答"净收益最高），
+            # 并在末 turn 记终局惩罚。
+            gave_up = bool(ep.hit_turn_limit) and not ep.final_answer
+            shp = ([0.0] * len(ep.turns) if gave_up else coverage_shaping(
                 [t.doc_titles for t in ep.turns],
-                gold_titles_by_task.get(ep.task_id, []), args.shaping_beta)
+                gold_titles_by_task.get(ep.task_id, []), args.shaping_beta))
             covered = set()
             sym_seq = []
             n_search_so_far = 0
@@ -368,6 +375,9 @@ def main() -> None:
                     reward = -args.retrieval_cost + shp[i]
                     stats["searches"] += 1
                     stats["shaping_sum"] += shp[i]
+                    if gave_up and i == len(asst_positions) - 1:
+                        reward -= args.turn_limit_penalty
+                        stats["gave_up"] += 1
                 turn_tuples.append((inp.to(model.device), out.to(model.device),
                                     reward, None, args.rollout_temperature))
                 turn_syms.append(sym_seq[i] if i < len(sym_seq) else [0.0] * 4)
@@ -471,6 +481,7 @@ def main() -> None:
             "mean_searches": ep_stats["searches"] / n_ep,
             "mean_shaping": ep_stats["shaping_sum"] / n_ep,
             "invalid_rate": ep_stats["invalid"] / n_ep,
+            "giveup_rate": ep_stats["gave_up"] / n_ep,
             "skipped_long_prompts": skipped_long,
             "rollout_s": round(rollout_s, 1),
             "update_s": round(update_s, 1),
@@ -482,6 +493,7 @@ def main() -> None:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         log(f"ep {episode_idx+1:4d} R={mean_r:+.3f} em={record['alias_em']:.3f} "
             f"ans={record['answer_rate']:.2f} inv={record['invalid_rate']:.2f} "
+            f"giv={record['giveup_rate']:.2f} "
             f"ev={gen_ev:.3f} "
             f"rev={replay_ev:.3f} shp={record['mean_shaping']:.3f} "
             f"[{rollout_s:.0f}s+{update_s:.0f}s]")
