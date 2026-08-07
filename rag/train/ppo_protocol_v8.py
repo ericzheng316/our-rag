@@ -47,6 +47,10 @@ def build_parser():
                    help="jsonl: {id, question, golden_answers[]}")
     p.add_argument("--save_path", required=True)
     p.add_argument("--retrieve_url", default="")
+    p.add_argument("--closed_pool", type=int, default=0,
+                   help="1 = MuSiQue 官方闭池设置：题目自带 20 段落做检索池"
+                        "（pool_retriever 词法 F1），不需要 FAISS 检索器；"
+                        "gold 必在池内 → shaping 与检索天花板 100%")
     p.add_argument("--engine_gpu", type=int, required=True)
     p.add_argument("--train_gpu", type=int, default=-1,
                    help="单卡训练的物理卡号（与 --train_gpus 二选一）")
@@ -185,7 +189,8 @@ def main() -> None:
             rows.append({"task_id": str(r.get("id", len(rows))),
                          "question": str(r["question"]),
                          "answer": golds[0], "golds": golds,
-                         "gold_titles": [str(t) for t in (r.get("gold_titles") or [])]})
+                         "gold_titles": [str(t) for t in (r.get("gold_titles") or [])],
+                         "pool": r.get("pool") or []})
     random.Random(args.seed).shuffle(rows)
     if args.max_samples > 0:
         rows = rows[: args.max_samples]
@@ -194,8 +199,8 @@ def main() -> None:
     log(f"tasks={len(rows)}")
 
     retrieve_url = args.retrieve_url or os.environ.get("RETRIEVE_URL", "")
-    if not retrieve_url:
-        raise SystemExit("需要 --retrieve_url（动作探索依赖真实 FAISS 检索）")
+    if not retrieve_url and not args.closed_pool:
+        raise SystemExit("需要 --retrieve_url（或 --closed_pool 1 走官方闭池）")
 
     session = requests.Session()
 
@@ -359,16 +364,17 @@ def main() -> None:
         t0 = time.time()
         episodes, trajs, traj_tasks, ep_stats, skipped_long = [], [], [], None, 0
         if rank == 0:
+            from agent.episode import pool_retriever
             episodes = run_episodes_batched(
                 dup,
                 lambda prompts: [r["text"] for r in pool.generate(
                     prompts, dict(sampling), adapter_path=adapter_path,
                     adapter_version=step + 1)],
-                None,
+                pool_retriever if args.closed_pool else None,
                 chat_template_fn,
                 max_turns=args.max_turns,
                 docs_per_search=args.docs_per_search,
-                batched_retrieve_fn=batched_retrieve,
+                batched_retrieve_fn=None if args.closed_pool else batched_retrieve,
             )
             trajs, traj_tasks, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
