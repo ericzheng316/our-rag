@@ -39,7 +39,10 @@ Protocol, in order:
 3. Finish with <answer>short answer</answer> — the answer text only, no
    explanation inside the tags. Never issue a search after you can answer.
 Before each action you may think briefly inside <think>...</think> (one or
-two sentences at most)."""
+two sentences at most).
+Each <result> may be followed by [searches left: k] — the number of further
+searches you may still issue. When it reaches 0 you must answer with what
+you have."""
 
 _SEARCH = re.compile(r"<search slot=\"(\d+)\">(.*?)</search>", re.DOTALL)
 _ANSWER = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
@@ -103,8 +106,17 @@ def parse_assistant_turn(text: str) -> Action:
     return InvalidAction("no_action_tag", text)
 
 
-def format_result_block(docs: List[str]) -> str:
-    return "<result>\n" + "\n---\n".join(docs) + "\n</result>"
+def format_result_block(docs: List[str], turns_left: int | None = None) -> str:
+    """工具反馈块。``turns_left`` 非 None 时附剩余预算行。
+
+    状态完备性(非提示技巧):有限视界 MDP 的最优策略非平稳,必依赖剩余
+    步数;观测缺少它则最优策略不在可表示策略类内,并造成 state aliasing
+    (Pardo et al., ICML 2018, case (i))。实测:SFT v2 有 53% 轨迹在
+    第 2 与第 8 turn 做同一决策直至撞上限。详见
+    ACEC_V8_STOPPING_DESIGN_NOTES.md。
+    """
+    tail = f"\n[searches left: {max(int(turns_left), 0)}]" if turns_left is not None else ""
+    return "<result>\n" + "\n---\n".join(docs) + "\n</result>" + tail
 
 
 __all__ = [

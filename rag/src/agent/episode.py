@@ -128,6 +128,7 @@ def run_episodes_batched(
     *,
     batched_retrieve_fn: Optional[
         Callable[[List[str], int], List[List[Dict[str, str]]]]] = None,
+    show_budget: bool = False,
 ) -> List[EpisodeResult]:
     """Lockstep turn-boundary batching: all active episodes generate together.
 
@@ -220,7 +221,10 @@ def run_episodes_batched(
                 result.n_searches += 1
                 state["messages"].append({
                     "role": "user",
-                    "content": format_result_block([d["contents"] for d in docs]),
+                    "content": format_result_block(
+                        [d["contents"] for d in docs],
+                        turns_left=(max_turns - turn_index - 2
+                                    if show_budget else None)),
                 })
 
     for state in states:
