@@ -99,6 +99,9 @@ def build_parser():
                    help="critic 回放池保留最近 N ep 的 (feat,G)")
     p.add_argument("--replay_epochs", type=int, default=3)
     p.add_argument("--replay_batch", type=int, default=512)
+    p.add_argument("--sym_feats", type=int, default=1,
+                   help="1 = 影子 critic 特征拼符号量[覆盖率,新覆盖,turn进度,"
+                        "检索占比](特权侧,仅训练期;asymmetric critic 合法)")
     p.add_argument("--micro_turns", type=int, default=1,
                    help="带梯度 forward+backward 合并 turn 数（实测 >1 在 seq~2k OOM）")
     p.add_argument("--scan_batch", type=int, default=8,
@@ -240,7 +243,8 @@ def main() -> None:
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
     from ppo_rsf_vllm_v8 import value_feat_dim
-    feat_dim = value_feat_dim(model.config.hidden_size, args.value_feat)
+    feat_dim = value_feat_dim(model.config.hidden_size, args.value_feat) \
+        + (4 if args.sym_feats else 0)
     vhead = make_value_head(feat_dim, args.critic_hidden).to(model.device)
     if args.vhead_init:
         blob = torch.load(args.vhead_init, map_location="cpu")
@@ -315,15 +319,30 @@ def main() -> None:
     metrics_path = Path(args.save_path) / "online_metrics_ppo_proto_v8.jsonl"
 
     def episodes_to_trajs(episodes):
-        trajs, traj_tasks, skipped_long = [], [], 0
+        trajs, traj_tasks, traj_syms, skipped_long = [], [], [], 0
         stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0,
                  "shaping_sum": 0.0}
         for ep in episodes:
             golds = golds_by_task.get(ep.task_id, [ep.gold_answer])
+            g_titles = set(gold_titles_by_task.get(ep.task_id, []))
             shp = coverage_shaping(
                 [t.doc_titles for t in ep.turns],
                 gold_titles_by_task.get(ep.task_id, []), args.shaping_beta)
+            covered = set()
+            sym_seq = []
+            n_search_so_far = 0
+            for ti_, tr_ in enumerate(ep.turns):
+                new_g = (set(tr_.doc_titles) & g_titles) - covered
+                covered |= new_g
+                if tr_.action_type == "search":
+                    n_search_so_far += 1
+                sym_seq.append([
+                    len(covered) / max(len(g_titles), 1),
+                    len(new_g) / max(len(g_titles), 1),
+                    ti_ / max(args.max_turns, 1),
+                    n_search_so_far / max(args.max_turns, 1)])
             turn_tuples = []
+            turn_syms = []
             asst_positions = [i for i, m in enumerate(ep.messages)
                               if m["role"] == "assistant"]
             for i, pos in enumerate(asst_positions):
@@ -351,10 +370,12 @@ def main() -> None:
                     stats["shaping_sum"] += shp[i]
                 turn_tuples.append((inp.to(model.device), out.to(model.device),
                                     reward, None, args.rollout_temperature))
+                turn_syms.append(sym_seq[i] if i < len(sym_seq) else [0.0] * 4)
             if turn_tuples:
                 trajs.append(turn_tuples)
+                traj_syms.append(turn_syms)
                 traj_tasks.append(ep.task_id)
-        return trajs, traj_tasks, stats, skipped_long
+        return trajs, traj_tasks, traj_syms, stats, skipped_long
 
     for episode_idx in range(args.num_episodes):
         lo = (episode_idx * args.batch_size) % len(rows)
@@ -362,7 +383,7 @@ def main() -> None:
         dup = [t for t in batch for _ in range(args.n_rollouts)]
 
         t0 = time.time()
-        episodes, trajs, traj_tasks, ep_stats, skipped_long = [], [], [], None, 0
+        episodes, trajs, traj_tasks, traj_syms, ep_stats, skipped_long = [], [], [], [], None, 0
         if rank == 0:
             from agent.episode import pool_retriever
             episodes = run_episodes_batched(
@@ -376,7 +397,7 @@ def main() -> None:
                 docs_per_search=args.docs_per_search,
                 batched_retrieve_fn=None if args.closed_pool else batched_retrieve,
             )
-            trajs, traj_tasks, ep_stats, skipped_long = episodes_to_trajs(episodes)
+            trajs, traj_tasks, traj_syms, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
 
         t1 = time.time()
@@ -401,7 +422,21 @@ def main() -> None:
         # ── critic 跨 ep 回放池（owner 2026-08-06 批准）────────────────────
         vs_new = stats.pop("value_samples", None)
         replay_ev = float("nan")
+        gen_ev = float("nan")
         if rank == 0 and vs_new is not None:
+            feats_h, G_new = vs_new
+            if args.sym_feats:
+                sym_flat = torch.tensor(
+                    [v for ts in traj_syms for v in ts], dtype=torch.float16)
+                if sym_flat.shape[0] == feats_h.shape[0]:
+                    feats_h = torch.cat([feats_h, sym_flat], dim=1)
+            vs_new = (feats_h, G_new)
+            # 新 ev 定义:上一轮回放训练后的 vhead 对本 ep 未见样本的泛化
+            with torch.no_grad():
+                Xn = feats_h.float().to(model.device)
+                pred = vhead(Xn)
+                yn = G_new.to(model.device)
+                gen_ev = float(1 - (yn - pred).var() / (yn.var() + 1e-12))
             replay.append(vs_new)
             X = torch.cat([f for f, _g in replay]).float().to(model.device)
             y = torch.cat([g for _f, g in replay]).to(model.device)
@@ -440,13 +475,14 @@ def main() -> None:
             "rollout_s": round(rollout_s, 1),
             "update_s": round(update_s, 1),
             "replay_ev": replay_ev,
+            "gen_ev": gen_ev,
             **{k: v for k, v in stats.items() if isinstance(v, (int, float))},
         }
         with metrics_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         log(f"ep {episode_idx+1:4d} R={mean_r:+.3f} em={record['alias_em']:.3f} "
             f"ans={record['answer_rate']:.2f} inv={record['invalid_rate']:.2f} "
-            f"ev={stats.get('explained_variance', float('nan')):.3f} "
+            f"ev={gen_ev:.3f} "
             f"rev={replay_ev:.3f} shp={record['mean_shaping']:.3f} "
             f"[{rollout_s:.0f}s+{update_s:.0f}s]")
 

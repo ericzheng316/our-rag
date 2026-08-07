@@ -232,7 +232,7 @@ def value_feat_dim(hidden_size: int, variant: str) -> int:
 
 def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
                            want_entropy: bool = False, value_variant: str = "last",
-                           feat_sink=None):
+                           feat_sink=None, with_value: bool = True):
     """micro-batch 版 _turn_forward：一次 forward 处理多个 turn 样本。
 
     显存关键（2026-08-05 实测教训）：CausalLM 完整调用物化 [B,T,V] logits，
@@ -255,7 +255,8 @@ def _turns_forward_batched(model, vhead, pairs, need_grad: bool,
             feat = _value_feature(hidden[b], li, value_variant)
             if feat_sink is not None:
                 feat_sink.append(feat.detach().half().cpu())
-            values.append(vhead(feat))
+            values.append(vhead(feat) if with_value
+                          else torch.zeros((), dtype=torch.float32))
             if want_entropy:
                 logp = torch.log_softmax(rows, dim=-1)
                 entropies.append(-(logp.exp() * logp).sum(-1).mean())
@@ -395,10 +396,13 @@ def ppo_update(
         flat_pairs.extend((inp, out) for inp, out, _r, _e, _t in rows)
     flat_lp, flat_v = [], []
     feat_sink = [] if collect_value_samples else None
+    # 影子 + 非 GAE 时预扫不算 V（vhead 维度可能含 trainer 侧符号特征）
+    scan_value = train_value or adv_mode == "gae"
     for s0 in range(0, len(flat_pairs), max(scan_batch, 1)):
         lps, vs, _ = _turns_forward_batched(
             model, vhead, flat_pairs[s0:s0 + max(scan_batch, 1)], need_grad=False,
-            value_variant=value_variant, feat_sink=feat_sink)
+            value_variant=value_variant, feat_sink=feat_sink,
+            with_value=scan_value)
         flat_lp.extend(lps)
         flat_v.extend(float(v) for v in vs)
     idx = 0
