@@ -331,6 +331,199 @@ baseline; do not treat its prior findings as guidance for new work.
   (current 8q x G8 is already ~80% of the measured ~79.5x vLLM concurrency
   ceiling at `vllm_gpu_mem_frac=0.45`) before re-running this comparison at
   a scale large enough to actually mean something.
+- **Phase 0 backbone spike: Qwen3.5-9B is GO on the pinned stack, no CUDA
+  changes needed (2026-08-04, idealab-05).** vllm 0.19.1's registry already
+  includes `Qwen3_5ForConditionalGeneration` (+ Moe/MTP variants) and
+  transformers 5.13.0 ships the full `qwen3_5` family — the model card's
+  "requires main branch" note predates this stack. `Qwen/Qwen3.5-9B` (19 GB,
+  Apache 2.0) downloaded into `$HF_HOME`; **`env.sh` sets `HF_HUB_OFFLINE=1`**,
+  so any new download needs an explicit `HF_HUB_OFFLINE=0` prefix or it fails
+  with `OfflineModeIsEnabled`. HF training path: `AutoModelForCausalLM`
+  resolves the multimodal checkpoint to text-only `Qwen3_5ForCausalLM`
+  (8.95B params, 16.7 GiB bf16, vision tower not loaded), sdpa generation
+  clean, PEFT LoRA `target_modules="all-linear"` attaches (r=16 → 43.3M
+  trainable). vLLM rollout path: loads with `enable_lora=True,
+  max_lora_rank=64` on one A100 (engine up in 191 s; VRAM 75.9/79 GiB at
+  `gpu_memory_utilization=0.85` — lower that if colocating with the HF
+  trainer), greedy QA correct with the `enable_thinking=False` chat-template
+  kwarg (hybrid thinking model, thinking ON by default — always pass the
+  kwarg). Perf notes, non-blocking: HF side uses the slow torch
+  linear-attention fallback (`flash-linear-attention` + `causal-conv1d` not
+  installed; backward isn't the bottleneck, revisit only if training is
+  slow); vllm's fla ops emit a format-mismatch UserWarning on very short
+  sequences (seq_len < num_heads) with correct output — re-check once real
+  rollout lengths exceed 32 tokens. Throughput was NOT measured (smoke was
+  latency-bound: 8 prompts × ~5 output tokens); measure during the
+  engine-pool correctness pass. Smoke scripts:
+  `smoke_hf_qwen35.py` / `smoke_vllm_qwen35.py` (session scratchpad; vLLM
+  v1 spawns engine-core procs, so any vLLM script needs a
+  `if __name__ == "__main__"` guard or it dies with the multiprocessing
+  bootstrap error).
+- **Dummy-LoRA round-trip caught a real silent no-op (2026-08-04): PEFT
+  adapters saved from `Qwen3_5ForCausalLM` do NOT apply when served by
+  vLLM's `Qwen3_5ForConditionalGeneration`.** Both `all-linear` and
+  standard-7-module adapters loaded without any error yet produced
+  byte-identical greedy output and first-token logprobs vs base. Root
+  cause (read from `vllm/model_executor/models/qwen3_5.py`): vLLM wraps
+  the text backbone as `self.language_model = Qwen3_5ForCausalLM(prefix=
+  "language_model")`, so its module paths are `language_model.model.
+  layers.*` while PEFT keys strip to `model.layers.*` — zero keys match
+  and vLLM ignores them silently. **Fix verified same day**: rewriting
+  adapter keys `base_model.model.model.*` → `base_model.model.
+  language_model.model.*` at export time (safetensors rename;
+  adapter_config unchanged) makes the adapter take effect (first-token
+  logprob −0.0201 → −0.2528, output text diverges — ROUNDTRIP PASS).
+  **The new training pipeline must ship an adapter-export step with this
+  rename plus a mandatory behavioral check** (base vs adapter greedy
+  logprob diff > 1e-3) after every hot-swap wiring change — load success
+  proves nothing here.
+- **Synthetic multi-hop task pipeline landed (`rag/src/synth/`,
+  2026-08-04)** — the Phase-1 data leg of the narrative refactor. Stages:
+  linkable-title index → mention-edge mining → K-hop chain sampling with
+  obscurity filters (in-degree / chunk-count caps) → task assembly
+  emitting the **canonical v5 `evidence_specification`**
+  (closed_candidate_pool scope; consumed by `CanonicalEvidenceAdapterV5`
+  with zero new adapter code) + closed pool (golds + token-overlap
+  confusable distractors) + leak-checked mention-masked slot hints +
+  template question. GPU stages are separate scripts: `synth/verbalize.py`
+  (vLLM Qwen3.5-9B question naturalization) and `synth/render_sft.py`
+  (**action-taxonomy v0, explicitly PROVISIONAL** — `<plan>` +
+  `<search slot="N">` + `<answer>`; regenerate after the taxonomy
+  decision). **Verbalize first run (2026-08-04, 20 smoke tasks) forced two
+  gate additions, both now in the script:** (1) lexical leak checks are
+  NOT enough — the model produced fluent questions that inverted the
+  chain direction or swapped relations (asked for the START entity while
+  gold stayed the final one; "acquired by" attached to the wrong subject).
+  A **round-trip answerability pass** (same engine, question + unmasked
+  gold evidence → must recover the gold answer, temp 0) catches exactly
+  this class: it rejected all 3 scrambled questions in the smoke while
+  passing 15/20 (2 more failed the lexical gate; failures keep the
+  template question; per-task `verbalize_check` records the model's
+  answer for diagnosis). Caveat noted in the docstring: the checker is
+  the future policy's own base model — fine for cold-start SFT data,
+  reconsider for eval sets. (2) `_answers_match` must NFKC-normalize
+  before containment — the model emits decomposed accents (e+U+0301)
+  while corpus titles are precomposed, and casefold alone silently
+  false-rejects ('Ouvéa' vs 'Ouvéa Island'; confirmed by codepoint
+  audit, fix verified offline against the recorded strings). Entry: `run_scripts/60_build_synth_tasks
+  .{py,sh}`. Smoke (400k corpus lines, 31 s): 104k linkable titles, 47k
+  mention edges, 20/20 tasks, leak audit 0/20 after the masking fix —
+  `mask_mention` must be punctuation-tolerant ("Pleasanton California"
+  span vs "Pleasanton, California" text; exact `re.escape` masking fails
+  SILENTLY and leaks the bridge entity, caught only by the post-mask
+  `_leaks_entity` audit). Hop sentences can be list-fragments (fine for evidence
+  spans; the verbalizer smooths the question).
+- **Full-corpus synthesis run (2026-08-04, `/scratch/boyuz5/acec/synth/
+  full_v1/`): 30 min single-core end-to-end, much cheaper than feared.**
+  2.95M linkable titles, **31.7M mention edges** (9.2 GB `edges.jsonl`,
+  durable asset — reuse instead of re-mining; mining itself was 26 of the
+  30 min), 300/300 tasks, hint-leak audit 0/300, 299 unique answers.
+  **K histogram at real density: {2:187, 3:70, 4:33, 5:7, 6:3}** — deep
+  chains sample fine, but uniform-K + retry-on-dead-walk still biases
+  62% to K=2; next improvement is per-K quota (stratified) sampling, and
+  a pool-size floor (1 task came out with pool=2 — confusable-distractor
+  lookup can come up near-empty; filter pools < ~8). Two traps hit on
+  the way: (1) `60_build_synth_tasks.sh` used `${MAX_LINES:-400000}`,
+  and bash `:-` substitutes on EMPTY as well as unset — `MAX_LINES=`
+  silently reran the 400k smoke while claiming a full run; fixed to
+  colon-less `${MAX_LINES-400000}` (empty now means full corpus, and the
+  progress line prints `max_lines=None` as the tell). (2) See the
+  verbalize entry above for the round-trip and NFKC gates.
+- **First complete synthetic dataset shipped (2026-08-04):
+  `/scratch/boyuz5/acec/synth/full_v1/tasks_final.jsonl` (281 tasks) +
+  `sft_v0.jsonl` (281 provisional-format trajectories).** Full-v1 chain:
+  verbalize 213/300 natural (lexical fails 63, round-trip fails 24;
+  natural rate collapses with depth — K=2 92%, K=3 43%, K=4 27%, K=5
+  0/7 — long chains keep tripping the no-entity-names rule; v0.3 ideas:
+  allow two-sentence questions for K>=4 and/or one rewrite-retry pass).
+  Final-question leak audit found **19 leaks, all template-source**
+  (natural questions 0): template questions concatenate hop hints, and a
+  hint legitimately contains its own src title = the previous hop's
+  discovery, so K-hop templates degrade toward 1-2 effective hops —
+  leaked tasks are dropped from `tasks_final.jsonl`; template redesign
+  is a v0.3 item. **Closed-book screen (`synth/screen.py`, pass@4
+  T=0.7, self-model): 13/300 = 4.3% parametrically answerable; K>=5:
+  0%.** The retrieval-mandatory construction holds (HotpotQA-class sets
+  run 30-50%+ on modern backbones). 10 closed-book-answerable tasks
+  remain in the final set — fine for SFT, exclude via
+  `closed_book.correct` when building eval slices. K dist of the final
+  set: {2:187, 3:61, 4:28, 5:3, 6:2} — deep-K supply is the binding
+  constraint; per-K quota sampling plus the K>=4 verbalizer fix are the
+  two levers before scaling to thousands of tasks.
+- **MuSiQue-Ans landed (2026-08-04): `~/acec/datasets/musique/` (symlinks
+  into the HF snapshot on /scratch; source `dgslibisey/MuSiQue`, the
+  faithful official-format mirror — FlashRAG-normalized versions were
+  rejected because they drop the 20-paragraph pools and decomposition).**
+  dev 2417 / train 19938; hop families dev: 2hop 1252, 3hop 760, 4hop
+  405. Format essentials verified: 20-para pool with `is_supporting`
+  (⇒ CLOSED_CANDIDATE_POOL calibration), `question_decomposition` with
+  per-step answers + `paragraph_support_idx`, `answerable` flag (all
+  true — this is the -Ans release; MuSiQue-Full's unanswerable twins are
+  NOT in this mirror, so the abstention leg stays on the corpus-ablation
+  plan unless Full is fetched from the official GDrive later). Adapter:
+  `rag/src/belief/acec/datasets/musique_v5.py`
+  (`MuSiQueEvidenceAdapterV5`, one requirement per decomposition step,
+  paragraph-level units), validated on all 2417 dev records through the
+  v5 dataclass gates. Trap found on the way: MuSiQue's `#N` decomposition
+  back-references are POSITIONAL (1-indexed step order), while
+  `step["id"]` is a global integer — keying the resolution map by
+  `step["id"]` silently leaves every `#N` unresolved (0/2417 unresolved
+  after the positional fix). Dev file is ordered by hop family (2hop
+  first) — never take a prefix as a sample without shuffling.
+- **SFT cold start v0 trained (2026-08-04, ~50 min on one A100):
+  `/scratch/boyuz5/acec/checkpoints/sft_synth_v0/` — dev_loss 0.125 →
+  0.122 (epoch-1 best of 3), first-turn format compliance 8/8 on held-out
+  dev.** Trainer: `rag/train/sft_synth_v0.py` (custom, pinned-stack
+  native; vendored LLaMA-Factory REJECTED — no qwen3 template, pins
+  transformers<=4.46 vs venv 5.13). Method: one training sample per
+  assistant turn (prompt = chat template with add_generation_prompt +
+  thinking off, so train-time conditioning exactly matches inference,
+  empty-<think> prefix included); LoRA r=32 on the standard 7 projections
+  only (all-linear touches the fla layers whose vLLM LoRA path is
+  unverified); adapters auto-exported via
+  `rag/train/vllm_adapter_export.py` (the productized language_model-
+  prefix rename, fail-closed when no keys match). Two runtime lessons:
+  (1) the HF slow-path linear-attention fallback (no
+  flash-linear-attention installed) OOMs an 80G A100 at batch 2 x 4096
+  during backward — gradient checkpointing + batch 1/accum 16 fits
+  comfortably (~20 min/epoch); installing flash-linear-attention +
+  causal-conv1d is now a before-Phase-3 item since it affects memory,
+  not just speed. (2) print() to piped stdout is block-buffered (again)
+  — step logs now flush=True. **Serve-side check PASSED (same day):**
+  `adapter_best_vllm` in a real vLLM engine — behavioral diff 6/6 (no
+  silent no-op), first-turn protocol SFT 6/6 vs base 5/6, turn-2 6/6
+  with correct bridge-entity binding in the slot-2 query. The full
+  train→export→serve→multi-turn loop is validated. Honest note: base
+  Qwen3.5-9B already follows the protocol 5/6 from the system prompt
+  alone — SFT's value is reliability + exact answer contract + traj
+  style, and the outcome-only arm will be format-stable too (good for
+  clean comparisons). Ops note: the ad-hoc "pick a free GPU" awk
+  one-liner lost a race on the now-busy node (another user grabbed the
+  card between pick and engine start; 0.85 util needs ~67 GiB free) —
+  the engine pool must use gpu_profile.sh-style strict-idle checks with
+  retry, or reserve headroom.
+
+- **Action taxonomy FINALIZED (user decision 2026-08-04): protocol v1 =
+  the validated v0 format** — `<plan>` first turn, `<search slot="N">`
+  per hop, `<answer>` terminal, `<result>` for tool feedback, thinking
+  disabled everywhere. Canonical module:
+  `rag/src/agent/protocol_v1.py` (system prompt + total deterministic
+  parser); `synth/render_sft.py` now imports SYSTEM_PROMPT from it —
+  never redefine the protocol text elsewhere. The slot number in
+  `<search slot="N">` is the native action label: **the E5-cosine
+  ActionLabeler is retired from the v8 pipeline.** Rollout log schema =
+  `agent/episode.py::EpisodeResult` (native actions, per-turn doc ids)
+  — this is what the Phase-2 calibration replay consumes.
+  `agent/episode.py` also ships `run_episodes_batched` (lockstep
+  turn-boundary batching — the exact driver loop the GRPO trainer will
+  reuse) and `pool_retriever` (distractor-mode retrieval over a task's
+  closed pool: no FAISS server needed for synth training, and it matches
+  the closed-pool calibration regime by construction). Engine pool:
+  `rag/train/engine_pool.py` (spawn workers pin CUDA_VISIBLE_DEVICES
+  before importing torch/vllm; adapter hot-swap by (version, path) per
+  request; mandatory `lora_check()` anti-silent-no-op probe) +
+  `rag/train/gpu_pick.py` (strict-idle double-sample picking with
+  retries — the 2026-08-04 race lesson).
 
 ## Repo layout
 - `run_scripts/` — all pipeline entry points, at the repo root (a sibling of
