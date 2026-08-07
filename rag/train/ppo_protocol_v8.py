@@ -47,6 +47,9 @@ def build_parser():
                    help="jsonl: {id, question, golden_answers[]}")
     p.add_argument("--save_path", required=True)
     p.add_argument("--retrieve_url", default="")
+    p.add_argument("--show_budget", type=int, default=1,
+                   help="1 = result 块附 [searches left: k]（状态完备性修复："
+                        "冒烟实测撞上限率 47.5%→8.3%、EM +5.8pp、协议错不变）")
     p.add_argument("--closed_pool", type=int, default=0,
                    help="1 = MuSiQue 官方闭池设置：题目自带 20 段落做检索池"
                         "（pool_retriever 词法 F1），不需要 FAISS 检索器；"
@@ -406,6 +409,7 @@ def main() -> None:
                 max_turns=args.max_turns,
                 docs_per_search=args.docs_per_search,
                 batched_retrieve_fn=None if args.closed_pool else batched_retrieve,
+                show_budget=bool(args.show_budget),
             )
             trajs, traj_tasks, traj_syms, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
