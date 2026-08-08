@@ -281,7 +281,9 @@ def main() -> None:
     # vLLM 内部 init 单进程分布式时读到它们就去连 torchrun 的 store（挂死在
     # MASTER_PORT 的 TCP 重试上）。自己的进程组 init 完后这些 env 已无用，
     # spawn 前清掉。
-    if world > 1:
+    # 无条件清理：world==1 时我们不 init 进程组，但 torchrun 仍注入了这些
+    # 变量，engine worker 照样会去连它的 store 并超时（2026-08-08 单卡踩到）。
+    if True:
         for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE",
                   "GROUP_RANK", "GROUP_WORLD_SIZE", "ROLE_RANK",
                   "ROLE_WORLD_SIZE", "ROLE_NAME", "MASTER_ADDR", "MASTER_PORT",
