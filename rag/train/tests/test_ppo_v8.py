@@ -301,6 +301,15 @@ class GroupBaselineModeTest(unittest.TestCase):
             self.assertTrue(torch.equal(before[k], v),
                             f"影子模式下 vhead.{k} 不应被主循环更新")
 
+    def test_shadow_tolerates_wider_vhead(self):
+        """影子模式下 vhead 维度可以宽于 _value_feature 输出（trainer 侧会
+        再拼符号特征）——此时两条前向路径都不得调用 vhead。2026-08-08 崩溃
+        的回归测试。"""
+        model, _vh, opt, trajs, gids = self._setup()
+        wide = MLPValueHead(16 + 4, 8)      # 比 last 特征宽 4 维
+        ppo_update(model, wide, opt, trajs, group_ids=gids, adv_mode="loo",
+                   train_value=False, value_variant="last", **self._kw())
+
     def test_feat_dim_helper(self):
         self.assertEqual(value_feat_dim(4096, "last"), 4096)
         self.assertEqual(value_feat_dim(4096, "pool_last"), 8192)

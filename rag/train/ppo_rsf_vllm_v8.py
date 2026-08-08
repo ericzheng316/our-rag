@@ -495,9 +495,12 @@ def ppo_update(
         for s0 in range(0, len(order), max(micro_turns, 1)):
             chunk = [turn_meta[j] for j in order[s0:s0 + max(micro_turns, 1)]]
             pairs = [(m[2], m[3]) for m in chunk]
+            # 影子模式下 v_new 不进 loss，且 vhead 可能含 trainer 侧符号特征
+            # （维度 != _value_feature 的输出），故不算 —— 与预扫同一原则。
             new_lps, v_news, ents = _turns_forward_batched(
                 model, vhead, pairs, need_grad=True,
-                want_entropy=entropy_coef > 0.0, value_variant=value_variant)
+                want_entropy=entropy_coef > 0.0, value_variant=value_variant,
+                with_value=train_value)
             ref_lps = (_reference_logprobs_batched(model, pairs)
                        if kl_coef > 0.0 else [None] * len(chunk))
             chunk_loss = None
