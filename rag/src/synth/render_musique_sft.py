@@ -90,9 +90,67 @@ def degrade_query(query: str, prev_answers: List[str]) -> str | None:
     return None
 
 
+# ── v1.2 规范 plan(--canonical_plan)────────────────────────────────
+_REL_T = {
+    "location": "Where is {e} located?", "country": "In which country is {e}?",
+    "place of birth": "Where was {e} born?", "date of birth": "When was {e} born?",
+    "place of death": "Where did {e} die?", "date of death": "When did {e} die?",
+    "spouse": "Who is the spouse of {e}?", "father": "Who is the father of {e}?",
+    "mother": "Who is the mother of {e}?", "performer": "Who performed {e}?",
+    "author": "Who is the author of {e}?", "director": "Who directed {e}?",
+    "employer": "Who is the employer of {e}?", "genre": "What genre is {e}?",
+    "record label": "What record label is {e} on?",
+    "capital": "What is the capital of {e}?",
+    "headquarters location": "Where is the headquarters of {e}?",
+    "educated at": "Where was {e} educated?",
+    "child": "Who is the child of {e}?", "sibling": "Who is the sibling of {e}?",
+}
+
+
+def _canon_q(q: str) -> str:
+    q = q.strip()
+    if ">>" not in q:
+        return q if q.endswith("?") else q + "?"
+    left, _, rel = q.partition(">>")
+    e, rel = left.strip(), rel.strip().lower()
+    t = _REL_T.get(rel)
+    return t.format(e=e) if t else f"What is the {rel} of {e}?"
+
+
+_QSTOP = {"who", "what", "where", "when", "which", "whom", "whose", "how",
+          "is", "are", "was", "were", "did", "does", "do", "the", "a", "an",
+          "of", "in", "on", "at", "to", "for", "by", "with", "and", "or",
+          "that", "this", "it", "its", "as", "from", "into", "named", "name"}
+
+
+def _keywordize(q: str) -> str:
+    """canonical 模式的查询风格:剥问询词/停用词 → 关键词短语。
+    与 plan 行文本构造性分叉(防查询=plan 拷贝的循环吸引子,v3 事故)。"""
+    q = q.replace(">>", " ").rstrip("?")
+    words = [w for w in q.split() if w.strip() and
+             w.strip(",.'\"").lower() not in _QSTOP]
+    return " ".join(words) if words else q
+
+
+def _infer_type(ans: str) -> str:
+    import re as _re
+    a = ans.strip()
+    if _re.fullmatch(r"1\d{3}|20\d{2}", a):
+        return "year"
+    if _re.search(r"\d{1,2},? \d{4}|January|February|March|April|May|June|July"
+                  r"|August|September|October|November|December", a):
+        return "date"
+    if _re.fullmatch(r"[\d,.]+", a):
+        return "number"
+    if a.lower() in ("yes", "no"):
+        return "yes/no"
+    return "entity"
+
+
 def render_record(rec: Dict[str, Any], rng: random.Random,
                   docs_per_result: int, max_doc_chars: int,
-                  inject_rewrite: float = 0.0) -> Dict[str, Any] | None:
+                  inject_rewrite: float = 0.0,
+                  canonical_plan: bool = False) -> Dict[str, Any] | None:
     steps = rec.get("question_decomposition") or []
     paras = rec.get("paragraphs") or []
     answer = str(rec.get("answer", "")).strip()
@@ -101,8 +159,14 @@ def render_record(rec: Dict[str, Any], rng: random.Random,
     by_idx = {p["idx"]: p for p in paras}
     non_support = [p for p in paras if not p.get("is_supporting")]
 
-    plan_lines = [f"{i + 1}. {_plan_refs(str(s['question']).strip())}"
-                  for i, s in enumerate(steps)]
+    if canonical_plan:
+        plan_lines = [
+            f"{i + 1}. {_canon_q(str(s['question']))} "
+            f"({_infer_type(str(s.get('answer', '')))})"
+            for i, s in enumerate(steps)]
+    else:
+        plan_lines = [f"{i + 1}. {_plan_refs(str(s['question']).strip())}"
+                      for i, s in enumerate(steps)]
     plan = "<plan>\n" + "\n".join(plan_lines) + "\n</plan>"
 
     messages: List[Dict[str, str]] = [
@@ -124,6 +188,8 @@ def render_record(rec: Dict[str, Any], rng: random.Random,
         if gold is None:
             return None  # 支撑段落缺失 —— 轨迹不完整，整题丢弃
         query = _resolve_refs(str(s["question"]).strip(), prev_answers)
+        if canonical_plan:
+            query = _keywordize(query)
         if i == inject_at:
             bad_q = degrade_query(query, prev_answers)
             if bad_q is not None and bad_q != query:
@@ -184,6 +250,8 @@ def main() -> None:
                          "坏结果 → 同 slot 的 gold 子问题作为改写。坏查询 turn 记入"
                          " skip_turns（context-only）。仅在退化查询确实检索不到"
                          " gold（确定性判定）时插入。")
+    ap.add_argument("--canonical_plan", type=int, default=0,
+                    help="1 = v1.2 规范 plan(原子问句保 #k + 答案类型)")
     ap.add_argument("--seed", type=int, default=20260805)
     args = ap.parse_args()
 
@@ -213,7 +281,8 @@ def main() -> None:
             open(args.tasks_out, "w", encoding="utf-8") as tasks_fh:
         for rec in picked:
             traj = render_record(rec, rng, args.docs_per_result,
-                                  args.max_doc_chars, args.inject_rewrite)
+                                  args.max_doc_chars, args.inject_rewrite,
+                                  canonical_plan=bool(args.canonical_plan))
             if traj is None:
                 n_drop += 1
                 continue

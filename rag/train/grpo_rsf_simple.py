@@ -297,6 +297,10 @@ def _unpack_turn(turn: Tuple) -> Tuple[torch.Tensor, torch.Tensor, float, Option
     if len(turn) == 5:
         inp_ids, out_ids, reward, engine_logprobs, temperature = turn
         return inp_ids, out_ids, reward, engine_logprobs, float(temperature)
+    if len(turn) == 6:
+        # v8 grad-mask 变体:第 6 元素是自由 token 梯度掩码,由消费方自取。
+        inp_ids, out_ids, reward, engine_logprobs, temperature, _gmask = turn
+        return inp_ids, out_ids, reward, engine_logprobs, float(temperature)
     raise ValueError(f"unexpected turn tuple length: {len(turn)}")
 
 

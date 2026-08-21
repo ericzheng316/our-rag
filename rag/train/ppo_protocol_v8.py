@@ -41,12 +41,21 @@ def build_parser():
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base_model", default="Qwen/Qwen3.5-9B")
+    p.add_argument("--policy_init_adapter", default="",
+                   help="策略初始化 adapter(续段用);空 = 与 sft_adapter 相同。"
+                        "ref 锚永远取 sft_adapter——段 2 重锚实验证明锚点必须"
+                        "是罕见 think 的 SFT 策略,否则自由通道频率失锚(7 集通胀)")
     p.add_argument("--sft_adapter",
                    default="/scratch/boyuz5/acec/checkpoints/sft_synth_v0/adapter_best")
     p.add_argument("--data_path", required=True,
                    help="jsonl: {id, question, golden_answers[]}")
     p.add_argument("--save_path", required=True)
     p.add_argument("--retrieve_url", default="")
+    p.add_argument("--show_belief", type=int, default=0,
+                   help="J8 观测注入:result 块附 [slots: ...] 覆盖状态行"
+                        "(judge 服务计算,环境侧 token,不进奖励不经自由锚)")
+    p.add_argument("--judge_url", default="",
+                   help="judge 服务地址,如 http://127.0.0.1:18021/judge")
     p.add_argument("--show_budget", type=int, default=1,
                    help="1 = result 块附 [searches left: k]（状态完备性修复："
                         "冒烟实测撞上限率 47.5%→8.3%、EM +5.8pp、协议错不变）")
@@ -81,6 +90,10 @@ def build_parser():
     p.add_argument("--clip_eps", type=float, default=0.2)
     p.add_argument("--value_clip", type=float, default=0.2)
     p.add_argument("--value_coef", type=float, default=0.5)
+    p.add_argument("--kl_free_coef", type=float, default=0.0,
+                   help="自由 token(parser 忽略)的 K3-KL 强锚系数。>0 时"
+                        "启用双档锚:动作 token 用 --kl_coef 弱锚,自由 token"
+                        "用本系数钉死在 SFT 分布——六次通胀崩塌的收口方案。")
     p.add_argument("--kl_coef", type=float, default=0.05,
                    help="0.01 在 48ep run 里拉不住漂移（KL>0.10 后 em 崩）；无自动早停，KL 由人工盯")
     p.add_argument("--vhead_init", default="",
@@ -118,6 +131,17 @@ def build_parser():
     p.add_argument("--retrieve_chunk", type=int, default=128,
                    help="批量检索单次 POST 的 query 上限（保护 retriever）")
     p.add_argument("--format_penalty", type=float, default=0.2)
+    p.add_argument("--grad_mask_free", type=int, default=0,
+                   help="0=不屏蔽;1=全屏蔽(自由 token 永不进策略梯度——实测"
+                        "缴械纠偏通道,五启 ep40 史上最快崩塌,勿再用);"
+                        "2=非对称:自由 token 仅在优势>0 时屏蔽(赢家 think "
+                        "拿不到正梯度,输家复读照吃负梯度)。")
+    p.add_argument("--token_cost", type=float, default=1e-4,
+                   help="parser 忽略 token 的单价(think 内容/标签外裸文本)。"
+                        "自由通道计价:外部信息 c_r、内部计算 c_tok、终止 ±EM。"
+                        "初始扰动实测≈0(0.7%% turn 有自由 token),448 复读 "
+                        "turn 付 0.045=3×c_r。两次崩溃(think 膨胀/复读)的"
+                        "统一反压力,替代 ban(ban 会把压力改道成裸散文)。")
     p.add_argument("--turn_limit_penalty", type=float, default=0.3,
                    help="打满 max_turns 仍未作答的终局惩罚（放弃比答错更该罚："
                         "此前无此分支，且 shaping 与检索次数正相关 → 只搜不答"
@@ -150,6 +174,7 @@ def main() -> None:
 
     import json
     import random
+    import re
     import time
     from pathlib import Path
 
@@ -178,6 +203,10 @@ def main() -> None:
         torch.cuda.set_device(0)  # 每进程 CUDA_VISIBLE_DEVICES 已 pin 单卡
 
     from agent.episode import run_episodes_batched
+    _belief_fn = None
+    if args.show_belief and args.judge_url:
+        from agent.judge_tracker import make_belief_update_fn
+        _belief_fn = make_belief_update_fn(judge_url=args.judge_url)
     from belief.acec.answer_verifier_v64 import answer_exact_match
     from engine_pool import EnginePool
     from ppo_rsf_vllm_v8 import coverage_shaping, make_value_head, ppo_update
@@ -243,8 +272,9 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     base = AutoModelForCausalLM.from_pretrained(
         args.base_model, torch_dtype=torch.bfloat16, device_map={"": 0})
-    model = PeftModel.from_pretrained(base, args.sft_adapter, is_trainable=True)
-    # KL 参考 = 冻结的 SFT 初始策略（不是裸基座）——第二份同源 adapter，命名 "ref"
+    init_adapter = args.policy_init_adapter or args.sft_adapter
+    model = PeftModel.from_pretrained(base, init_adapter, is_trainable=True)
+    # KL 参考 = 冻结的 SFT 初始策略（不是裸基座，也不随续段重锚）
     model.load_adapter(args.sft_adapter, adapter_name="ref")
     model.set_adapter("default")
     model.gradient_checkpointing_enable()
@@ -322,15 +352,44 @@ def main() -> None:
     if dist_group is not None:
         dist.barrier()
 
+    # 动作闭合即截停:防止策略在 turn 内自我模拟环境(伪造 <result> 后继续
+    # 生成,ep31 诊断实锤),也把动作之后的死 token 从梯度里剔掉。
     sampling = {"temperature": args.rollout_temperature,
-                "max_tokens": args.max_new_tokens}
+                "max_tokens": args.max_new_tokens,
+                "stop": ["</search>", "</answer>"],
+                "include_stop_str_in_output": True}
     eos_id = tokenizer.eos_token_id
     metrics_path = Path(args.save_path) / "online_metrics_ppo_proto_v8.jsonl"
+
+    # 自由通道 = parser 解析之外的一切(think 内容、标签外裸文本)。
+    free_strip = re.compile(
+        r'<search slot="\d+">.*?</search>|<answer>.*?</answer>|<plan>.*?</plan>',
+        re.DOTALL)
+
+    def free_token_count(turn_text: str) -> int:
+        free = free_strip.sub("", turn_text).strip()
+        if not free:
+            return 0
+        return len(tokenizer(free, add_special_tokens=False).input_ids)
+
+    def grad_mask_for_turn(turn_text: str, out_len: int) -> torch.Tensor:
+        """与 out(含末尾 EOS)等长的掩码:动作标签内 + EOS = 1,其余 = 0。"""
+        enc = tokenizer(turn_text, add_special_tokens=False,
+                        return_offsets_mapping=True)
+        keep = [mm.span() for mm in free_strip.finditer(turn_text)]
+        mask = torch.zeros(out_len, dtype=torch.float32)
+        for i, (a, b) in enumerate(enc["offset_mapping"]):
+            if i >= out_len - 1:
+                break
+            if any(a < e and b > s for s, e in keep):
+                mask[i] = 1.0
+        mask[out_len - 1] = 1.0  # EOS:收束信号必须保留梯度
+        return mask
 
     def episodes_to_trajs(episodes):
         trajs, traj_tasks, traj_syms, skipped_long = [], [], [], 0
         stats = {"answered": 0, "em_sum": 0.0, "searches": 0, "invalid": 0,
-                 "shaping_sum": 0.0, "gave_up": 0}
+                 "shaping_sum": 0.0, "gave_up": 0, "free_tok": 0, "turns": 0}
         for ep in episodes:
             golds = golds_by_task.get(ep.task_id, [ep.gold_answer])
             g_titles = set(gold_titles_by_task.get(ep.task_id, []))
@@ -383,8 +442,22 @@ def main() -> None:
                     if gave_up and i == len(asst_positions) - 1:
                         reward -= args.turn_limit_penalty
                         stats["gave_up"] += 1
-                turn_tuples.append((inp.to(model.device), out.to(model.device),
-                                    reward, None, args.rollout_temperature))
+                # 内部计算计价:parser 忽略的每个 token 付 c_tok(所有 turn
+                # 类型统一适用——invalid 的复读体、answer 前的 think 都在内)。
+                n_free = free_token_count(ep.messages[pos]["content"])
+                reward -= args.token_cost * n_free
+                stats["free_tok"] += n_free
+                stats["turns"] += 1
+                if args.grad_mask_free or args.kl_free_coef > 0:
+                    gmask = grad_mask_for_turn(ep.messages[pos]["content"],
+                                               out.numel())
+                    turn_tuples.append((inp.to(model.device),
+                                        out.to(model.device), reward, None,
+                                        args.rollout_temperature, gmask))
+                else:
+                    turn_tuples.append((inp.to(model.device),
+                                        out.to(model.device), reward, None,
+                                        args.rollout_temperature))
                 turn_syms.append(sym_seq[i] if i < len(sym_seq) else [0.0] * 4)
             if turn_tuples:
                 trajs.append(turn_tuples)
@@ -412,6 +485,8 @@ def main() -> None:
                 docs_per_search=args.docs_per_search,
                 batched_retrieve_fn=None if args.closed_pool else batched_retrieve,
                 show_budget=bool(args.show_budget),
+                show_belief=bool(args.show_belief),
+                belief_update_fn=(_belief_fn if args.show_belief else None),
             )
             trajs, traj_tasks, traj_syms, ep_stats, skipped_long = episodes_to_trajs(episodes)
         rollout_s = time.time() - t0
@@ -432,6 +507,8 @@ def main() -> None:
             value_variant=args.value_feat,
             train_value=not args.shadow_critic,
             collect_value_samples=True,
+            grad_mask_mode={0: "none", 1: "always", 2: "pos"}[args.grad_mask_free],
+            kl_free_coef=args.kl_free_coef,
         )
         update_s = time.time() - t1
 
@@ -488,6 +565,7 @@ def main() -> None:
             "mean_shaping": ep_stats["shaping_sum"] / n_ep,
             "invalid_rate": ep_stats["invalid"] / n_ep,
             "giveup_rate": ep_stats["gave_up"] / n_ep,
+            "mean_free_tok": ep_stats["free_tok"] / max(ep_stats["turns"], 1),
             "skipped_long_prompts": skipped_long,
             "rollout_s": round(rollout_s, 1),
             "update_s": round(update_s, 1),
@@ -500,6 +578,8 @@ def main() -> None:
         log(f"ep {episode_idx+1:4d} R={mean_r:+.3f} em={record['alias_em']:.3f} "
             f"ans={record['answer_rate']:.2f} inv={record['invalid_rate']:.2f} "
             f"giv={record['giveup_rate']:.2f} "
+            f"ftk={record['mean_free_tok']:.1f} "
+            f"kl={stats.get('kl', 0):.3f}/{stats.get('kl_free', 0):.3f} "
             f"ev={gen_ev:.3f} "
             f"rev={replay_ev:.3f} shp={record['mean_shaping']:.3f} "
             f"[{rollout_s:.0f}s+{update_s:.0f}s]")

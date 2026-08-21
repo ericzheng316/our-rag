@@ -1,0 +1,13 @@
+\begin{tabular}{lccccc}
+\toprule
+Model & EM & F1 & 2hop & 3hop & 4hop \\
+\midrule
+Closed-book (no retrieval) & 4.8 & 0.0 & 6.8 & 3.3 & 1.7 \\
+Single-shot RAG (top-10) & 15.4 & 24.9 & 20.7 & 10.8 & 7.9 \\
+Protocol zero-shot & 29.0 & 38.2 & 37.9 & 24.3 & 10.1 \\
+SFT (canonical plans) & 34.5 & 40.7 & 44.0 & 23.8 & 24.9 \\
++ RL 100 ep (mean of 3 seeds) & 47.5$\pm$1.6 & 55.4 & 54.5 & 42.6 & 34.8 \\
++ RL 120 ep (flagship) & 50.3 & 59.3 & 56.9 & 42.4 & 44.7 \\
+flagship, open-book & 45.6 & 56.5 & 53.8 & 42.6 & 26.2 \\
+\bottomrule
+\end{tabular}

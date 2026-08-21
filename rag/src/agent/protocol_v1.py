@@ -129,3 +129,12 @@ __all__ = [
     "format_result_block",
     "parse_assistant_turn",
 ]
+
+
+# C 臂(槽位信念)附录:仅 show_belief=1 时由 episode 驱动拼进 system prompt,
+# B 臂的 prompt 与历史逐字节一致——消融唯一变量就是这条线及其声明。
+SYSTEM_PROMPT_BELIEF_ADDENDUM = (
+    "\nEach <result> may also include [evidence: 1:covered, 2:partial, 3:open]"
+    " — a rough per-slot estimate of whether your plan's evidence slots appear"
+    " covered by documents retrieved so far. Prefer searching slots marked"
+    " open, and consider answering once all slots look covered.")

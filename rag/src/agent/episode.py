@@ -17,9 +17,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from .slot_belief import CoverageBelief
 from .protocol_v1 import (
     PROTOCOL_VERSION,
     SYSTEM_PROMPT,
+    SYSTEM_PROMPT_BELIEF_ADDENDUM,
     AnswerAction,
     InvalidAction,
     SearchAction,
@@ -129,6 +131,8 @@ def run_episodes_batched(
     batched_retrieve_fn: Optional[
         Callable[[List[str], int], List[List[Dict[str, str]]]]] = None,
     show_budget: bool = False,
+    show_belief: bool = False,
+    belief_update_fn=None,
 ) -> List[EpisodeResult]:
     """Lockstep turn-boundary batching: all active episodes generate together.
 
@@ -158,7 +162,8 @@ def run_episodes_batched(
             final_answer=None,
         )
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT
+                + (SYSTEM_PROMPT_BELIEF_ADDENDUM if show_belief else "")},
             {"role": "user", "content": task["question"]},
         ]
         states.append({
@@ -166,6 +171,7 @@ def run_episodes_batched(
             "messages": messages,
             "retrieve": retriever_factory(task) if retriever_factory else None,
             "done": False,
+             "belief": CoverageBelief() if show_belief else None,
         })
 
     for turn_index in range(max_turns):
@@ -219,13 +225,40 @@ def run_episodes_batched(
                     [str(d.get("id", "")) for d in docs], raw,
                     doc_titles=[_title_of(d.get("contents", "")) for d in docs]))
                 result.n_searches += 1
-                state["messages"].append({
-                    "role": "user",
-                    "content": format_result_block(
-                        [d["contents"] for d in docs],
-                        turns_left=(max_turns - turn_index - 2
-                                    if show_budget else None)),
-                })
+                block = format_result_block(
+                    [d["contents"] for d in docs],
+                    turns_left=(max_turns - turn_index - 2
+                                if show_budget else None))
+                bel = state.get("belief")
+                if bel is not None and belief_update_fn is None:
+                    bel.set_plan(action.plan)
+                    bel.observe([d["contents"] for d in docs], slot=action.slot)
+                    line = bel.as_line()
+                    if line:
+                        block += "\n" + line
+                if belief_update_fn is not None:
+                    # 批量模式:先挂占位,回调统一填 belief_line 后拼行
+                    state["_pending_block"] = block
+                    state["_pending_plan"] = action.plan
+                    state["_pending_docs"] = [d["contents"] for d in docs]
+                    state["_pending_slot"] = action.slot
+                else:
+                    state["messages"].append({"role": "user", "content": block})
+
+        if belief_update_fn is not None:
+            pending = [st for st in states
+                       if not st["done"] and "_pending_block" in st]
+            if pending:
+                belief_update_fn(pending)      # 跨 episode 批量 judge
+                for st in pending:
+                    block = st.pop("_pending_block")
+                    line = st.pop("belief_line", "")
+                    st.pop("_pending_plan", None)
+                    st.pop("_pending_docs", None)
+                    st.pop("_pending_slot", None)
+                    if line:
+                        block += "\n" + line
+                    st["messages"].append({"role": "user", "content": block})
 
     for state in states:
         if not state["done"]:

@@ -76,12 +76,24 @@ def ppo_policy_loss(
     old_logprobs: torch.Tensor,
     advantage: torch.Tensor,
     clip_eps: float = 0.2,
+    mask: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
-    """Token-level clipped surrogate with a scalar turn advantage broadcast."""
+    """Token-level clipped surrogate with a scalar turn advantage broadcast.
+
+    ``mask``(可选,与 token 等长,1=计梯度):自由通道通胀的根治手段——
+    parser 忽略的 token(think/裸文本)不进策略梯度,轨迹优势的广播只落在
+    动作语义 token 上。think 概率因此停留在 SFT 锚定水平,既不 ban(压力
+    改道)也不靠加价(实测 1e-3 只推迟不压平)。
+    """
     ratio = torch.exp(new_logprobs - old_logprobs)
     unclipped = ratio * advantage
     clipped = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * advantage
-    return -torch.minimum(unclipped, clipped).mean()
+    per_tok = -torch.minimum(unclipped, clipped)
+    if mask is not None:
+        m = mask.to(per_tok.device, dtype=per_tok.dtype)
+        n = min(per_tok.numel(), m.numel())
+        return (per_tok[:n] * m[:n]).sum() / m[:n].sum().clamp(min=1.0)
+    return per_tok.mean()
 
 
 def clipped_value_loss(
@@ -345,6 +357,8 @@ def ppo_update(
     value_variant: str = "last",
     train_value: bool = True,
     collect_value_samples: bool = False,
+    grad_mask_mode: str = "always",
+    kl_free_coef: float = 0.0,
 ) -> dict:
     """One PPO update over a rollout batch.
 
@@ -390,9 +404,12 @@ def ppo_update(
     turn_meta = []  # (traj_idx, t, inp, out, old_lp, adv, ret, v_old)
     model.eval()
     flat_pairs, rows_by_traj = [], []
+    gmasks_by_traj = []
     for traj in trajs:
         rows = [_unpack_turn(turn) for turn in traj]
         rows_by_traj.append(rows)
+        gmasks_by_traj.append([turn[5] if len(turn) > 5 else None
+                               for turn in traj])
         flat_pairs.extend((inp, out) for inp, out, _r, _e, _t in rows)
     flat_lp, flat_v = [], []
     feat_sink = [] if collect_value_samples else None
@@ -428,7 +445,8 @@ def ppo_update(
         else:
             advs, rets = gae_advantages(rewards, values, gamma, gae_lambda)
         for t, (inp, out, old_lp) in enumerate(unpacked):
-            turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t], values[t]])
+            turn_meta.append([ti, t, inp, out, old_lp, advs[t], rets[t],
+                              values[t], gmasks_by_traj[ti][t]])
 
     if turn_meta and adv_mode == "loo":
         # RLOO:baseline_i = 其他 K−1 条的均值;一行减法,广播到全 turn。
@@ -471,8 +489,10 @@ def ppo_update(
         import torch.distributed as dist
         # turn_meta 的 tensor 全在 CPU/或搬到 CPU 再广播（pickle 走 object list）
         if rank == 0:
-            payload = [[ti, t, inp.cpu(), out.cpu(), old_lp.cpu(), adv, ret, v_old]
-                       for ti, t, inp, out, old_lp, adv, ret, v_old in turn_meta]
+            payload = [[ti, t, inp.cpu(), out.cpu(), old_lp.cpu(), adv, ret,
+                        v_old, gm.cpu() if gm is not None else None]
+                       for ti, t, inp, out, old_lp, adv, ret, v_old, gm
+                       in turn_meta]
         else:
             payload = None
         box = [payload]
@@ -481,7 +501,8 @@ def ppo_update(
     if not turn_meta:
         return {"skipped": True}
 
-    stats = {"policy_loss": 0.0, "value_loss": 0.0, "kl": 0.0, "clip_frac": 0.0, "n_turns": len(turn_meta)}
+    stats = {"policy_loss": 0.0, "value_loss": 0.0, "kl": 0.0, "kl_free": 0.0,
+             "clip_frac": 0.0, "n_turns": len(turn_meta)}
     model.train()
     device = next(model.parameters()).device
     n_meta = max(len(turn_meta), 1)
@@ -502,13 +523,22 @@ def ppo_update(
                 want_entropy=entropy_coef > 0.0, value_variant=value_variant,
                 with_value=train_value)
             ref_lps = (_reference_logprobs_batched(model, pairs)
-                       if kl_coef > 0.0 else [None] * len(chunk))
+                       if (kl_coef > 0.0 or kl_free_coef > 0.0)
+                       else [None] * len(chunk))
             chunk_loss = None
             for m, new_lp, v_new, ent, ref_lp in zip(
                     chunk, new_lps, v_news, ents, ref_lps):
-                _ti, _t, _inp, _out, old_lp, adv, ret, v_old = m
+                _ti, _t, _inp, _out, old_lp, adv, ret, v_old, gmask = m
                 adv_t = torch.tensor(adv, dtype=torch.float32, device=device)
-                p_loss = ppo_policy_loss(new_lp, old_lp.to(device), adv_t, clip_eps)
+                # grad_mask_mode: "none"=不屏蔽(七启起的主线——反通胀交给
+                # 双档 K3 锚);"always"=全屏蔽(缴械纠偏,勿用);"pos"=非对称。
+                use_mask = gmask
+                if grad_mask_mode == "none":
+                    use_mask = None
+                elif gmask is not None and grad_mask_mode == "pos" and adv <= 0:
+                    use_mask = None
+                p_loss = ppo_policy_loss(new_lp, old_lp.to(device), adv_t,
+                                         clip_eps, mask=use_mask)
                 if train_value:
                     v_loss = clipped_value_loss(
                         v_new,
@@ -521,9 +551,28 @@ def ppo_update(
                     v_loss = torch.tensor(0.0)  # 影子模式：critic 走回放池
                     loss = p_loss
                 if ref_lp is not None:
-                    kl_term = (new_lp - ref_lp.to(device)).mean()
-                    loss = loss + kl_coef * kl_term
-                    stats["kl"] += float(kl_term.detach()) / n_meta
+                    # K3 估计器:k3 = expm1(δ) − δ, δ = log ref − log new。
+                    # 恒非负、无偏、曲率正确——对漂移 token 的拉力随漂移量
+                    # 增长(K1 的梯度只均匀压低采样 token,无定向拉力,是
+                    # 六次通胀崩塌的锚失效根因,见设计笔记 §9)。
+                    delta = ref_lp.to(device) - new_lp
+                    k3 = torch.expm1(delta) - delta
+                    if gmask is not None and kl_free_coef > 0.0:
+                        # 双档:动作 token 弱锚(保学习速度),自由 token
+                        # 强锚(think/裸文本钉死在 SFT 分布,反通胀主力)。
+                        gm = gmask.to(device, dtype=k3.dtype)
+                        n_tok = min(k3.numel(), gm.numel())
+                        k3v, gmv = k3[:n_tok], gm[:n_tok]
+                        fw = 1.0 - gmv
+                        kl_act = (k3v * gmv).sum() / gmv.sum().clamp(min=1.0)
+                        kl_free = (k3v * fw).sum() / fw.sum().clamp(min=1.0)
+                        loss = loss + kl_coef * kl_act + kl_free_coef * kl_free
+                        stats["kl"] += float(kl_act.detach()) / n_meta
+                        stats["kl_free"] += float(kl_free.detach()) / n_meta
+                    else:
+                        kl_term = k3.mean()
+                        loss = loss + kl_coef * kl_term
+                        stats["kl"] += float(kl_term.detach()) / n_meta
                 if ent is not None:
                     loss = loss - entropy_coef * ent
                 chunk_loss = loss if chunk_loss is None else chunk_loss + loss
@@ -548,7 +597,7 @@ def ppo_update(
         optimizer.step()
     if dist_group is not None:
         import torch.distributed as dist
-        keys = ["policy_loss", "value_loss", "kl", "clip_frac"]
+        keys = ["policy_loss", "value_loss", "kl", "kl_free", "clip_frac"]
         buf = torch.tensor([stats[k] for k in keys], dtype=torch.float64,
                            device=next(model.parameters()).device)
         dist.all_reduce(buf, op=dist.ReduceOp.SUM, group=dist_group)
