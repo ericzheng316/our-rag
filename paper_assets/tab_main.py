@@ -7,6 +7,10 @@ from pathlib import Path
 OUT = "/home/boyuz5/our-rag/paper_assets/out"
 L = "/home/boyuz5/acec/logs"
 
+# 闭卷预测文件没写 f1 字段;用与 eval_musique_hops.py 同一实现补算
+sys.path.insert(0, "/home/boyuz5/our-rag/rag/src")
+from belief.acec.answer_verifier_v64 import answer_f1  # noqa: E402
+
 ROWS = [  # (标签, 预测文件 glob, 口径备注)
     ("Closed-book (no retrieval)", f"{L}/eval_a_ladder_*/a1_closedbook.jsonl", "open"),
     ("Single-shot RAG (top-10)",   f"{L}/eval_a_ladder_*/a2_singleshot.jsonl", "open"),
@@ -34,7 +38,12 @@ def score(globpat):
             em = int(r.get("alias_em", r.get("em", 0)))
             tot[h] = tot.get(h, 0) + 1
             hit[h] = hit.get(h, 0) + em
-            f1s[h] = f1s.get(h, 0.0) + float(r.get("f1", 0.0))
+            if "f1" in r:
+                f1 = float(r["f1"])
+            else:
+                pred = r.get("pred") or ""
+                f1 = float(answer_f1(pred, r["golds"])) if pred else 0.0
+            f1s[h] = f1s.get(h, 0.0) + f1
     assert n_files, f"无文件: {globpat}"
     n = sum(tot.values())
     return dict(

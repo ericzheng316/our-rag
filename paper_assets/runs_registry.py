@@ -88,6 +88,19 @@ RL_RUNS = [
      dict(sft="v3", max_new_tokens=448, lr=2e-5, kl_coef=0.02,
           kl_free_coef=0.5, token_cost=1e-3),
      "100集; dev 46.75; RL终点对SFT起点不敏感(第四结构发现)", "high"),
+    ("j8_inj_20260821T235038Z", "J8-injection (信念观测注入臂)",
+     "j8",
+     dict(policy_init="v3rl_step100", ref="sft_v3", lr=2e-5, kl_coef=0.02,
+          kl_free_coef=0.5, token_cost=1e-3, show_belief=1,
+          judge="judge_v2@4B"),
+     "49集守护截停(inv 0.22); +40集全量 46.71; 注入无增益(预注册止损)",
+     "high"),
+    ("j8_ctrl_20260822T163135Z", "J8-control (同窗口对照臂)",
+     "j8",
+     dict(policy_init="v3rl_step100", ref="sft_v3", lr=2e-5, kl_coef=0.02,
+          kl_free_coef=0.5, token_cost=1e-3, show_belief=0),
+     "50集守护截停(inv 0.15); +40集全量 47.83; vs 注入 McNemar z=−1.80",
+     "high"),
 ]
 
 SFT_RUNS = [

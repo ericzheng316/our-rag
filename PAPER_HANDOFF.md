@@ -94,3 +94,51 @@ step_40 全量对比: INJ 46.71 vs CTRL 47.83, McNemar z=−1.80(99:126)→ 无�
 - ACEC 判决地图终稿: 奖励侧✓(塑形,z=3.98) / 推理期决策✗(J7) / 可学习观测✗(J8);
   belief 存活形态=诊断器+选择性预测曲线; gold-free judge-as-reward 留下篇。
 文件: logs/j8_inj_20260821T235038Z / j8_ctrl_20260822T163135Z / eval_j8_ladder_20260823T065004Z
+
+## 10. 六方 wiki18 开放检索对比(MuSiQue full dev 2417, 2026-08-23)
+
+统一条件: 同一 wiki18 语料(21,015,324 段, 2018 dump)+ e5-base-v2 fp32 Flat 检索服务;
+temp 0; 各系统用其官方协议逐字复现(来源: Search-R1 infer.py / ZeroSearch inference.py(与
+Search-R1 逐字同款)/ ReCall 仓库 c820a43 历史版 ReSearch 模板与 pipeline / R1-Searcher
+eval_search_loacl.py prompt v0)。度量: alias_em(SQuAD 归一, 含官方别名)。
+
+| 系统 | 底座 | alias_em | F1 | 2hop | 3hop | 4hop | 均搜 |
+|---|---|---|---|---|---|---|---|
+| **ACEC ep120 (ours)** | Qwen3.5-9B+LoRA | **26.52** | 36.90 | 34.50 | 21.58 | 11.11 | 3.40 |
+| ReSearch | Qwen2.5-7B-Inst | 22.09 | 32.43 | — | — | — | 3.26 |
+| Search-R1 (ppo) | Qwen2.5-7B | 20.40 | 29.50 | — | — | — | 3.39 |
+| StepSearch | Qwen2.5-7B-Inst | 18.25 | 26.96 | — | — | — | 2.11 |
+| R1-Searcher | Qwen2.5-7B | 15.27 | 22.88 | — | — | — | 2.51 |
+| ZeroSearch | Qwen2.5-7B | 9.43 | 16.78 | 13.66/5.00/4.69 | | | 1.21 |
+
+配对显著性(同 2417 题): ours vs ReSearch 243:136, McNemar z=5.50;
+ours vs Search-R1 288:140, z=7.15。
+必注 caveat: (1) 底座不同(9B Qwen3.5 vs 7B Qwen2.5)——因果主张压在同底座
+A 阶梯/R3 同栈/塑形消融上, 本表是环境行情对比; (2) ReSearch 在 MuSiQue train 上
+亲训(最强 in-domain 对手, 仍 -4.4pp); (3) ZeroSearch 训练面对模拟 Google 文档,
+真实 e5 检索是其分布外(均搜 1.21 即证), 分数须带此注; (4) 复现忠实度锚:
+Search-R1 论文自报 MuSiQue ~19.6 vs 我们复现 20.4, ReSearch ~22 vs 22.1。
+文件: logs/baseline_evals/{research,searchr1,stepsearch,r1searcher,zerosearch}_musique_dev.jsonl*
++ ours_ep120_wiki18_musique.jsonl; 驱动 ~/acec/baseline_infer.py; 检索服务 ~/acec/wiki18_server.py。
+hotpot 2000 子集(bridge 1600/comparison 400)六方在跑, 出分后补 §10b。
+
+## 10b. 六方 wiki18 HotpotQA 对比(统一 2000 题子集: bridge 1600 / comparison 400, 2026-08-23)
+
+同 §10 条件; 子集 seed 20260823, 文件 baselines/eval_data/hotpot_dev2k.jsonl。
+关键背景: Search-R1 在 nq+hotpotqa 上亲训(in-domain), R1-Searcher 训练数据亦含 hotpot;
+我们对 hotpot 纯零样本(仅 MuSiQue 训练)。
+
+| 系统 | alias_em | bridge | comparison | F1 | 均搜 |
+|---|---|---|---|---|---|
+| **ACEC ep120 (ours, 零样本)** | **47.15** | **41.19** | **71.00** | 59.76 | 2.69 |
+| Search-R1 (in-domain) | 45.00 | 38.69 | 70.25 | 56.24 | 2.79 |
+| ReSearch | 44.05 | 38.56 | 66.00 | 56.62 | 2.79 |
+| R1-Searcher (含 hotpot 训练) | 39.60 | 34.19 | 61.25 | 51.07 | 2.01 |
+| StepSearch | 35.15 | 28.94 | 60.00 | 44.86 | 1.78 |
+| ZeroSearch | 30.70 | 23.62 | 59.00 | 41.45 | 1.08 |
+
+配对(ours vs Search-R1, 同 2000 题): all 190:147 z=2.34(显著);
+bridge 159:119 z=2.40(显著); comparison 31:28 z=0.39(打平其主场强项)。
+叙事: 零样本迁移整体超过亲训 in-domain 系统; 复现锚: Search-R1 论文自报 hotpot ~43。
+ZeroSearch 在 hotpot 塌得少(30.7 vs musique 9.4)与其"搜一次即答"习惯自洽(2 跳够用)。
+文件: logs/baseline_evals/*_hotpot2k.jsonl* + ours_ep120_wiki18_hotpot2k.jsonl。
