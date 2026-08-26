@@ -100,6 +100,7 @@ class EnginePool:
         gpu_memory_utilization: float = 0.85,
         max_model_len: int = 8192,
         init_timeout_s: float = 600.0,
+        seed: Optional[int] = None,
     ) -> None:
         self.model = model
         self.gpu_indices = list(gpu_indices)
@@ -113,6 +114,10 @@ class EnginePool:
             "gpu_memory_utilization": gpu_memory_utilization,
             "max_model_len": max_model_len,
         }
+        # 显式播种引擎采样 RNG(vLLM 引擎级 seed);None 保持 vLLM 默认,
+        # 与既往 run 行为一致
+        if seed is not None:
+            engine_kwargs["seed"] = seed
         # daemon=False is load-bearing: vLLM v1 engines spawn their own
         # engine-core child processes, and daemonic processes may not have
         # children. Cleanup is handled by shutdown() + the atexit hook.

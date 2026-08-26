@@ -215,6 +215,15 @@ def main() -> None:
     def log(msg: str) -> None:
         print(f"[ppo-proto-v8] {msg}", flush=True)
 
+    # ── 显式播种 ─────────────────────────────────────────────────────────
+    # --seed 统一控制:数据洗牌(下方 random.Random(args.seed))、torch RNG
+    # (value head 初始化/dropout;全 rank 同种,参数以 rank0 broadcast 为准)、
+    # python 全局 random、vLLM 引擎采样 RNG(EnginePool(seed=...))。
+    # 2026-08-25 之前的 run 只播种了数据洗牌,其余为未播种非确定性。
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    log(f"seed={args.seed} (data-shuffle + torch + python-random + engine)")
+
     # ── 数据 ────────────────────────────────────────────────────────────
     rows = []
     with open(args.data_path, "r", encoding="utf-8") as fh:
@@ -324,7 +333,8 @@ def main() -> None:
     if rank == 0:
         pool = EnginePool(args.base_model, [args.engine_gpu],
                           max_lora_rank=args.lora_rank,
-                          gpu_memory_utilization=args.engine_mem_frac)
+                          gpu_memory_utilization=args.engine_mem_frac,
+                          seed=args.seed)
         log(f"engine ready on GPU {args.engine_gpu}")
 
     os.makedirs(args.save_path, exist_ok=True)
