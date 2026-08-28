@@ -1,0 +1,277 @@
+% ============================================================
+% refs.bib — Breaking Outcome Ties (ACEC v8 paper)
+% 状态标记: [V]=2026-08-28 网查核实 arXiv 号/venue
+%           [S]=经典文献, 编号高置信
+%           [T]=TODO: 成文前核实作者全名/venue 细节
+% 作者列表统一 "First, A. and others" 起草, camera-ready 前补全。
+% ============================================================
+
+% ---------- 检索 RL 一系(六方同台基线) ----------
+
+@article{jin2025searchr1,        % [V] arXiv 2503.09516
+  title   = {Search-R1: Training {LLMs} to Reason and Leverage Search Engines with Reinforcement Learning},
+  author  = {Jin, Bowen and others},
+  journal = {arXiv preprint arXiv:2503.09516},
+  year    = {2025}
+}
+
+@inproceedings{chen2025research, % [V] arXiv 2503.19470, NeurIPS 2025 已录用
+  title     = {Re{S}earch: Learning to Reason with Search for {LLMs} via Reinforcement Learning},
+  author    = {Chen, Mingyang and others},   % [T] 核作者
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2025},
+  note      = {arXiv:2503.19470}
+}
+
+@article{song2025r1searcher,     % [V] arXiv 2503.05592
+  title   = {R1-Searcher: Incentivizing the Search Capability in {LLMs} via Reinforcement Learning},
+  author  = {Song, Huatong and others},      % [T] 核作者
+  journal = {arXiv preprint arXiv:2503.05592},
+  year    = {2025}
+}
+
+@inproceedings{wang2025stepsearch, % [V] arXiv 2505.15107, EMNLP Main 2025 (2025.emnlp-main.1106)
+  title     = {Step{S}earch: Igniting {LLMs} Search Ability via Step-Wise Proximal Policy Optimization},
+  author    = {Wang, Ziliang and others},    % [T] 核作者
+  booktitle = {Proceedings of EMNLP},
+  year      = {2025},
+  note      = {arXiv:2505.15107}
+}
+
+@article{sun2025zerosearch,      % [V] arXiv 2505.04588
+  title   = {Zero{S}earch: Incentivize the Search Capability of {LLMs} without Searching},
+  author  = {Sun, Hao and others},           % [T] 核作者
+  journal = {arXiv preprint arXiv:2505.04588},
+  year    = {2025}
+}
+
+@article{li2025r3rag,            % [S] arXiv 2505.23794(仓库血缘,本地已核)
+  title   = {R3-{RAG}: Learning Step-by-Step Reasoning and Retrieval for {LLMs} via Reinforcement Learning},
+  author  = {Li, Yuan and others},           % [T] 核标题措辞与作者
+  journal = {arXiv preprint arXiv:2505.23794},
+  year    = {2025}
+}
+
+% ---------- 过程奖励 / 奖励塑形 ----------
+
+@inproceedings{ng1999policy,     % [S] 势函数塑形定理
+  title     = {Policy Invariance under Reward Transformations: Theory and Application to Reward Shaping},
+  author    = {Ng, Andrew Y. and Harada, Daishi and Russell, Stuart},
+  booktitle = {Proceedings of ICML},
+  year      = {1999}
+}
+
+@inproceedings{lightman2024verify, % [S] arXiv 2305.20050, ICLR 2024
+  title     = {Let's Verify Step by Step},
+  author    = {Lightman, Hunter and others},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv:2305.20050}
+}
+
+@article{uesato2022solving,      % [S] arXiv 2211.14275, 过程 vs 结果监督
+  title   = {Solving Math Word Problems with Process- and Outcome-Based Feedback},
+  author  = {Uesato, Jonathan and others},
+  journal = {arXiv preprint arXiv:2211.14275},
+  year    = {2022}
+}
+
+@inproceedings{asai2024selfrag,  % [S] arXiv 2310.11511, ICLR 2024; 证据/引用式奖励邻域
+  title     = {Self-{RAG}: Learning to Retrieve, Generate, and Critique through Self-Reflection},
+  author    = {Asai, Akari and others},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv:2310.11511}
+}
+
+% ---------- 组相对估计器(§3 的对象) ----------
+
+@inproceedings{ahmadian2024rloo, % [S] arXiv 2402.14740, ACL 2024
+  title     = {Back to Basics: Revisiting {REINFORCE}-Style Optimization for Learning from Human Feedback in {LLMs}},
+  author    = {Ahmadian, Arash and others},
+  booktitle = {Proceedings of ACL},
+  year      = {2024},
+  note      = {arXiv:2402.14740}
+}
+
+@inproceedings{kool2019buy,      % [S] LOO 基线原始出处(ICLR 2019 Deep RL Meets Structured Prediction workshop)
+  title     = {Buy 4 {REINFORCE} Samples, Get a Baseline for Free!},
+  author    = {Kool, Wouter and van Hoof, Herke and Welling, Max},
+  booktitle = {ICLR Workshop: Deep RL Meets Structured Prediction},
+  year      = {2019}
+}
+
+@article{shao2024deepseekmath,   % [S] arXiv 2402.03300, GRPO 出处
+  title   = {Deep{S}eek{M}ath: Pushing the Limits of Mathematical Reasoning in Open Language Models},
+  author  = {Shao, Zhihong and others},
+  journal = {arXiv preprint arXiv:2402.03300},
+  year    = {2024}
+}
+
+@article{deepseek2025r1,         % [S] arXiv 2501.12948
+  title   = {Deep{S}eek-{R1}: Incentivizing Reasoning Capability in {LLMs} via Reinforcement Learning},
+  author  = {{DeepSeek-AI}},
+  journal = {arXiv preprint arXiv:2501.12948},
+  year    = {2025}
+}
+
+@article{liu2025drgrpo,          % [T] arXiv 2503.20783 号待核; 组相对估计器偏差分析
+  title   = {Understanding {R1}-Zero-Like Training: A Critical Perspective},
+  author  = {Liu, Zichen and others},
+  journal = {arXiv preprint arXiv:2503.20783},
+  year    = {2025}
+}
+
+@article{schulman2017ppo,        % [S] arXiv 1707.06347
+  title   = {Proximal Policy Optimization Algorithms},
+  author  = {Schulman, John and others},
+  journal = {arXiv preprint arXiv:1707.06347},
+  year    = {2017}
+}
+
+% ---------- 数据集 ----------
+
+@article{trivedi2022musique,     % [S] TACL 2022, arXiv 2108.00573
+  title   = {Mu{S}i{Q}ue: Multihop Questions via Single-hop Question Composition},
+  author  = {Trivedi, Harsh and Balasubramanian, Niranjan and Khot, Tushar and Sabharwal, Ashish},
+  journal = {Transactions of the Association for Computational Linguistics},
+  volume  = {10},
+  year    = {2022}
+}
+
+@inproceedings{yang2018hotpotqa, % [S] EMNLP 2018, arXiv 1809.09600
+  title     = {Hotpot{QA}: A Dataset for Diverse, Explainable Multi-hop Question Answering},
+  author    = {Yang, Zhilin and others},
+  booktitle = {Proceedings of EMNLP},
+  year      = {2018}
+}
+
+@inproceedings{ho20202wiki,      % [S] COLING 2020, arXiv 2011.01060
+  title     = {Constructing a Multi-hop {QA} Dataset for Comprehensive Evaluation of Reasoning Steps},
+  author    = {Ho, Xanh and others},
+  booktitle = {Proceedings of COLING},
+  year      = {2020}
+}
+
+@inproceedings{trivedi2023ircot, % [S] ACL 2023, arXiv 2212.10509
+  title     = {Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions},
+  author    = {Trivedi, Harsh and others},
+  booktitle = {Proceedings of ACL},
+  year      = {2023}
+}
+
+% ---------- RAG / 检索 ----------
+
+@inproceedings{lewis2020rag,     % [S] NeurIPS 2020, arXiv 2005.11401
+  title     = {Retrieval-Augmented Generation for Knowledge-Intensive {NLP} Tasks},
+  author    = {Lewis, Patrick and others},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2020}
+}
+
+@inproceedings{karpukhin2020dpr, % [S] EMNLP 2020, arXiv 2004.04906
+  title     = {Dense Passage Retrieval for Open-Domain Question Answering},
+  author    = {Karpukhin, Vladimir and others},
+  booktitle = {Proceedings of EMNLP},
+  year      = {2020}
+}
+
+@article{wang2022e5,             % [S] arXiv 2212.03533(e5-base-v2 检索器)
+  title   = {Text Embeddings by Weakly-Supervised Contrastive Pre-training},
+  author  = {Wang, Liang and others},
+  journal = {arXiv preprint arXiv:2212.03533},
+  year    = {2022}
+}
+
+@article{jin2024flashrag,        % [S] arXiv 2405.13576(wiki18 语料与索引来源)
+  title   = {Flash{RAG}: A Modular Toolkit for Efficient Retrieval-Augmented Generation Research},
+  author  = {Jin, Jiajie and others},
+  journal = {arXiv preprint arXiv:2405.13576},
+  year    = {2024}
+}
+
+% ---------- 智能体 / 问题分解 ----------
+
+@inproceedings{yao2023react,     % [S] ICLR 2023, arXiv 2210.03629
+  title     = {Re{A}ct: Synergizing Reasoning and Acting in Language Models},
+  author    = {Yao, Shunyu and others},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023}
+}
+
+@inproceedings{press2023selfask, % [S] EMNLP Findings 2023, arXiv 2210.03350
+  title     = {Measuring and Narrowing the Compositionality Gap in Language Models},
+  author    = {Press, Ofir and others},
+  booktitle = {Findings of EMNLP},
+  year      = {2023}
+}
+
+@inproceedings{zhou2023least,    % [S] ICLR 2023, arXiv 2205.10625
+  title     = {Least-to-Most Prompting Enables Complex Reasoning in Large Language Models},
+  author    = {Zhou, Denny and others},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023}
+}
+
+% ---------- 模型 / 基础设施 ----------
+
+@article{qwen3report,            % [V] arXiv 2505.09388(家族谱系引用)
+  title   = {Qwen3 Technical Report},
+  author  = {{Qwen Team}},
+  journal = {arXiv preprint arXiv:2505.09388},
+  year    = {2025}
+}
+
+@misc{qwen35_9b,                 % [V] Qwen3.5 基座无独立报告(仅 Omni 版 2604.15804);先引模型卡
+  title        = {Qwen3.5-9B},
+  author       = {{Qwen Team}},
+  year         = {2025},
+  howpublished = {\url{https://huggingface.co/Qwen/Qwen3.5-9B}},
+  note         = {Model card; cite the base technical report if released before camera-ready}
+}
+
+@inproceedings{hu2022lora,       % [S] ICLR 2022, arXiv 2106.09685
+  title     = {Lo{RA}: Low-Rank Adaptation of Large Language Models},
+  author    = {Hu, Edward J. and others},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2022}
+}
+
+@inproceedings{kwon2023vllm,     % [S] SOSP 2023, arXiv 2309.06180
+  title     = {Efficient Memory Management for Large Language Model Serving with {PagedAttention}},
+  author    = {Kwon, Woosuk and others},
+  booktitle = {Proceedings of SOSP},
+  year      = {2023}
+}
+
+@article{douze2024faiss,         % [S] arXiv 2401.08281
+  title   = {The Faiss Library},
+  author  = {Douze, Matthijs and others},
+  journal = {arXiv preprint arXiv:2401.08281},
+  year    = {2024}
+}
+
+% ---------- 分析工具 / 杂项 ----------
+
+@inproceedings{andrychowicz2017her, % [S] NeurIPS 2017, arXiv 1707.01495(讨论节: hindsight 重标)
+  title     = {Hindsight Experience Replay},
+  author    = {Andrychowicz, Marcin and others},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2017}
+}
+
+@inproceedings{geifman2017selective, % [S] NeurIPS 2017, arXiv 1705.08500(§9.2 选择性预测)
+  title     = {Selective Classification for Deep Neural Networks},
+  author    = {Geifman, Yonatan and El-Yaniv, Ran},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2017}
+}
+
+@article{mcnemar1947,            % [S] 配对显著性检验
+  title   = {Note on the Sampling Error of the Difference between Correlated Proportions or Percentages},
+  author  = {McNemar, Quinn},
+  journal = {Psychometrika},
+  volume  = {12},
+  number  = {2},
+  year    = {1947}
+}
