@@ -8,7 +8,12 @@
 
 ## 1. Working Title
 
-### Primary
+> **RESOLVED (2026-08-28, author decision):**
+> **Breaking Answer Ties: Evidence-Coverage Rewards for Deep Multi-Hop Search**
+> ("Answer Ties" over "Outcome Ties" — matches the paper's defined term
+> *answer-tied groups* in §3.2 verbatim.)
+
+### Primary (superseded by the resolved title above)
 
 **Breaking Outcome Ties: Evidence-Coverage Rewards for Deep Multi-Hop Search**
 

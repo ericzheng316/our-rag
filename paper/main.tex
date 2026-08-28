@@ -1,0 +1,58 @@
+% ============================================================
+% Breaking Answer Ties: Evidence-Coverage Rewards for
+% Deep Multi-Hop Search
+% ARR submission target: 2026-10-15
+%
+% TODO(template): 换成官方 ARR/ACL 模板(acl.sty + acl_natbib);
+% 当前用 article 类做可编译占位, 章节文件不动即可迁移。
+% ============================================================
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{natbib}
+\bibliographystyle{plainnat}   % TODO: acl_natbib
+
+\title{Breaking Answer Ties: Evidence-Coverage Rewards for\\
+Deep Multi-Hop Search}
+\author{Anonymous ARR submission}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% 按 PAPER_OUTLINE_BETA §4 骨架填写; 数字守门:
+% [SEED3] / [PAIR] / [K8] 三项落地前不定稿。
+TODO: abstract (write last, per outline \S14).
+\end{abstract}
+
+\input{sections/intro}
+
+% ---- 待写章节(beta outline §6 结构)----
+% \input{sections/related}      % §2 Related Work
+% \input{sections/starvation}   % §3 Answer-Signal Starvation
+% \input{sections/method}       % §4 Coverage-Augmented Trajectory Ranking
+% \input{sections/setup}        % §5 Experimental Setup
+% \input{sections/results}      % §6 Does Coverage Improve Deep Search?
+% \input{sections/mechanism}    % §7 Why Does Coverage Help?
+% \input{sections/transfer}     % §8 Where Does Coverage Transfer?
+% \input{sections/placement}    % §9 Where Should Evidence Signals Enter?
+% \input{sections/limitations}  % §10 Limitations
+% \input{sections/conclusion}   % §11 Conclusion
+
+% intro.tex 引用的 label 占位(章节文件落地后移除)
+\newcommand{\stub}[2]{\section{#2}\label{#1}TODO.}
+\stub{sec:starvation}{Answer-Signal Starvation in Multi-Hop Search RL}
+\stub{sec:method}{Coverage-Augmented Trajectory Ranking}
+\stub{sec:results}{Does Coverage Improve Deep Search?}
+\stub{sec:mechanism}{Why Does Coverage Help?}
+\stub{sec:transfer}{Where Does Coverage Transfer?}
+\stub{sec:placement}{Where Should Evidence Signals Enter the Agent?}
+
+\bibliography{refs}
+
+\end{document}
