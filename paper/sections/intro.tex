@@ -28,19 +28,29 @@ The standard diagnosis for this is temporal: rewards are sparse along the
 trajectory, so intermediate progress goes uncredited. We argue for a
 different, \emph{group-level} diagnosis. A group-relative estimator learns
 only from comparisons among the $K$ rollouts of the same question---and on
-hard questions, the terminal signal routinely fails to differ. On MuSiQue
-4-hop questions, [84]\% of rollout groups are \emph{answer-tied}: every
-rollout is wrong (or, rarely, every rollout is right).\footnote{Measured on
-stratified closed-pool rollouts; see \S\ref{sec:mechanism} for the
-protocol. Percentages here are [K8-pending] preliminary values.} In an
-answer-tied group the terminal reward provides no within-group ordering
-whatsoever: it cannot prefer a rollout that recovered half of the required
-evidence chain over one that found nothing. What survives is worse than
-silence. The residual ranking signal inside an all-failure group comes from
-the cost and penalty terms---search cost, token cost, format
-penalties---which order trajectories by how \emph{cheaply} they failed. On
-precisely the questions where the agent most needs to learn persistence,
-the effective preference points toward giving up early.
+hard questions, the terminal signal routinely fails to differ. This
+degenerate regime is known in mathematical RLVR, where uniform-outcome
+groups are discarded by dynamic sampling~\citep{yu2025dapo,2025greso} or
+patched with synthetic advantages~\citep{hu2026avspo}. In deep search we
+find it is not an occasional efficiency loss but the \emph{dominant}
+regime, and it worsens structurally with depth: on MuSiQue 4-hop
+questions, [84]\% of rollout groups are \emph{answer-tied}---every rollout
+wrong (or, rarely, every rollout right).\footnote{Measured on stratified
+closed-pool rollouts; see \S\ref{sec:mechanism} for the protocol.
+Percentages here are [K8-pending] preliminary values.} In an answer-tied
+group the terminal reward provides no within-group ordering whatsoever: it
+cannot prefer a rollout that recovered half of the required evidence chain
+over one that found nothing. What survives is worse than silence. The
+residual ranking signal inside an all-failure group comes from the cost
+and penalty terms---search cost, token cost, format penalties---which
+order trajectories by how \emph{cheaply} they failed. On precisely the
+questions where the agent most needs to learn persistence, the effective
+preference points toward giving up early. Discarding these groups wastes
+the hardest questions; filling them with content-free signal leaves their
+internal ordering arbitrary---and recent evidence shows that whatever
+signal occupies an all-failure group can come to govern the learned policy
+outright~\citep{wang2026darkroom}. What tied groups need is an ordering
+that \emph{means} something.
 
 Standard multi-hop training sets already contain the information that
 breaks these ties: gold supporting documents~\citep{trivedi2022musique,
@@ -83,12 +93,13 @@ runtime advisor.
 
 Our contributions:
 \begin{itemize}\setlength\itemsep{2pt}
-\item \textbf{Answer-signal starvation, identified and quantified.} We show
-  that answer-tied rollout groups dominate deep multi-hop training
-  ([75/71/84]\% at 2/3/4 hops) and that inside all-failure groups the
-  residual preference is cost-driven, characterizing a failure mode of
-  group-relative RL that temporal sparsity does not capture
-  (\S\ref{sec:starvation}).
+\item \textbf{Answer-signal starvation in deep search, quantified.} While
+  uniform-outcome groups are a known inefficiency in mathematical
+  RLVR~\citep{yu2025dapo,hu2026avspo}, we show that in multi-hop search
+  they are the dominant regime, scale structurally with hop depth
+  ([75/71/84]\% at 2/3/4 hops), and carry a perverse residual ordering:
+  inside all-failure groups the surviving preference is cost-driven,
+  favoring cheap early abandonment (\S\ref{sec:starvation}).
 \item \textbf{A trajectory-ranking repair.} Completion-gated first-hit
   coverage---deterministic, judge-free, training-time-only---restores
   within-group preferences among uniformly failing rollouts, without
