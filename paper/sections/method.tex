@@ -73,16 +73,27 @@ required evidence they reached, displacing the cost-driven ordering of
 
 Trajectories mix two token populations: protocol actions (plan lines,
 search queries, answers) and free-form reasoning text. Reward pressure
-that leaks into the free-form channel inflates it---in our early runs,
-runaway growth of free-form tokens preceded every training collapse
-(forensics in Appendix~B). We therefore regularize the two channels
-separately: a weak KL coefficient on action tokens, which leaves the
-policy room to learn search behavior, and a strong KL coefficient on
-free-form tokens, anchored to the SFT reference policy, which rarely
-emits free-form reasoning. We present this channel-specific KL as a
-stability component of the training recipe rather than a contribution:
-isolating its necessity would require a uniform-KL comparison that we
-do not perform.
+that leaks into the free-form channel inflates it: under a uniform KL
+coefficient, every one of our six early training runs collapsed through
+runaway growth of free-form tokens, and five successive interventions on
+the gradient channel---token pricing at multiple rates, full and
+asymmetric gradient masking---left the geometric growth rate essentially
+unchanged (full forensics in Appendix~B). We therefore regularize the
+two channels separately: a weak KL coefficient on action tokens, which
+leaves the policy room to learn search behavior, and a strong KL
+coefficient on free-form tokens, anchored to the SFT reference policy,
+which rarely emits free-form reasoning. With the split coefficients in
+place, inflation stopped and training ran cleanly for the full schedule.
+A controlled comparison further shows that the anchor's \emph{identity}
+carries the effect: re-anchoring the reference from the SFT policy to a
+mid-training checkpoint that reasons freely re-ignited inflation within
+seven episodes (mean free-form tokens $0.7 \rightarrow 7.2$), while an
+otherwise-identical run that kept the SFT anchor trained without
+incident. We note the limit of this evidence: the collapse record is a
+forensic case series whose runs varied other settings as well, and we
+did not rerun a uniform-coefficient arm under the final configuration.
+We therefore present channel-specific anchoring as a well-evidenced
+stability practice, without claiming it is independently necessary.
 
 \subsection{Training procedure}
 \label{sec:method-algo}
