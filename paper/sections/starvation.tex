@@ -1,0 +1,131 @@
+% ============================================================
+% Section 3 — Answer-Signal Starvation (draft v1, 2026-08-29)
+% 占位: tie 账本表与成本相关面板数字 = [K8-pending]
+% Fig~\ref{fig:mechanism} 占位图环境在文末, 生成器 fig_mechanism.py 待写
+% ============================================================
+
+\section{Answer-Signal Starvation in Multi-Hop Search RL}
+\label{sec:starvation}
+
+\subsection{Setting and notation}
+\label{sec:starve-setting}
+
+A rollout is a trajectory
+$\tau=(s_1,a_1,o_1,\ldots,s_T,a_T)$ in which actions are protocol steps:
+a plan, search queries, and a terminal answer (or an abstention); each
+search returns retrieved paragraphs as the observation. During training
+the environment is a closed candidate pool per question; gold supporting
+documents $\mathcal{G}$ are privileged training annotations and play no
+role at test time (\S\ref{sec:setup}). Outcome-supervised systems assign
+each rollout a return of the form
+\begin{equation}
+R_{\mathrm{base}}(\tau) \;=\; R_{\mathrm{ans}}(\tau)
+\;-\; \lambda_{s} N_{\mathrm{search}}(\tau) \;-\; P_{\mathrm{aux}}(\tau),
+\label{eq:base-reward}
+\end{equation}
+a terminal correctness reward minus search, token, and format costs.
+
+\subsection{Group-relative learning and answer-tied groups}
+\label{sec:starve-ties}
+
+Group-relative estimators draw $K$ rollouts of the same question and
+compare them against each other. With a leave-one-out
+baseline~\citep{kool2019buy,ahmadian2024rloo}, the advantage of rollout
+$i$ is
+\begin{equation}
+A_i \;=\; R_i \;-\; \frac{1}{K-1}\sum_{j\neq i} R_j ,
+\label{eq:rloo}
+\end{equation}
+so any reward component that is constant within the group cancels
+exactly. We call a group \emph{answer-tied} when all $K$ rollouts carry
+the same terminal correctness label---every rollout wrong or every
+rollout right. In an answer-tied group, $R_{\mathrm{ans}}$ is such a
+constant: it contributes nothing to the within-group ordering,
+regardless of how differently the rollouts behaved. The group is not
+gradient-free---cost terms still differ across rollouts---but it is
+\emph{answer-blind}: terminal correctness supplies zero discrimination.
+
+How often does this happen? We sample $K$ rollouts per question at the
+training temperature on a stratified question set and count tied groups
+(protocol in \S\ref{sec:mechanism}). Table~\ref{tab:tie-ledger} shows
+the result: ties are not an edge case but the dominant regime, and they
+grow with hop depth---at four hops, [84]\% of groups are answer-tied,
+[76]\% uniformly wrong.\footnote{[K8-pending] preliminary values; final
+numbers use $K{=}8$ and the SFT initialization matched to training.}
+The deeper the question, the less the terminal reward can say.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+ & 2-hop & 3-hop & 4-hop \\
+\midrule
+Answer-tied groups & [75]\% & [71]\% & [84]\% \\
+\quad all wrong    & [~~]\% & [~~]\% & [76]\% \\
+\quad all right    & [~~]\% & [~~]\% & [~~]\% \\
+\bottomrule
+\end{tabular}
+\caption{The tie ledger: share of $K$-rollout groups in which terminal
+correctness provides no within-group ordering, by hop depth.
+[K8-pending placeholders.]}
+\label{tab:tie-ledger}
+\end{table}
+
+\subsection{The residual ordering prefers cheap failure}
+\label{sec:starve-cost}
+
+What ranks the rollouts of an all-failure group under
+Eq.~\ref{eq:base-reward}? Substituting into Eq.~\ref{eq:rloo} with
+$R_{\mathrm{ans}}$ constant,
+\begin{equation}
+A_i \;=\; -\lambda_{s}\bigl(N_i - \bar{N}_{-i}\bigr)
+\;-\;\bigl(P_i - \bar{P}_{-i}\bigr),
+\label{eq:cost-ordering}
+\end{equation}
+where $\bar{N}_{-i}$, $\bar{P}_{-i}$ are leave-one-out means. The
+surviving preference is purely economic: the rollout that searched
+less, generated less, and gave up sooner outranks the one that kept
+pursuing evidence---even if the latter recovered most of the required
+chain and the former recovered none. On the questions where persistence
+is the very skill to be learned, the effective training signal points
+the other way. Empirically, in all-failure groups from our outcome-only
+training logs, the advantage correlates [negatively] with search count
+($\rho = [~~]$; Fig.~\ref{fig:mechanism}A).\footnote{Our estimator is
+plain leave-one-out without group standard-deviation normalization;
+pathologies specific to $z$-scored advantages, where a vanishing group
+deviation can amplify an arbitrary residual signal without
+bound~\citep{wang2026darkroom}, do not apply directly. The qualitative
+point is shared: whatever signal remains in an all-failure group is the
+signal the group trains on.}
+
+\subsection{Coverage restores a meaningful ordering}
+\label{sec:starve-fix}
+
+Let $C_i \in [0,1]$ be the fraction of the gold evidence set that
+rollout $i$ retrieves (formal definition in \S\ref{sec:method}). Adding
+$\beta\,C$ to the return contributes
+\begin{equation}
+A^{\mathrm{cov}}_i \;=\; \beta\Bigl(C_i - \frac{1}{K-1}\sum_{j\neq i}
+C_j\Bigr) \;=\; \beta\,\frac{K}{K-1}\bigl(C_i - \bar{C}\bigr)
+\label{eq:cov-advantage}
+\end{equation}
+to the advantage: a common coverage offset cancels, and what remains is
+precisely a within-group ordering by evidence progress. This term is
+non-zero exactly when coverage varies inside the group---and it is in
+the all-failure groups, where the terminal reward is silent, that this
+variation carries otherwise-unused information. How often coverage
+actually varies there, and how the repair reshapes training, is the
+subject of \S\ref{sec:mechanism}.
+
+% ---- Fig 1 占位(fig_mechanism.py 待写: A=全错组内 outcome-only 按成本
+% 排序 vs +coverage 按证据进展排序的实例/相关面板; B=tie 账本柱状) ----
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.95\columnwidth}{\centering\vspace{2em}
+[Figure~1 placeholder: (A) ordering inside an all-failure group,
+outcome-only vs.\ coverage-augmented; (B) answer-tied group share by
+hop depth.]\vspace{2em}}}
+\caption{Answer-signal starvation and its repair. [Placeholder.]}
+\label{fig:mechanism}
+\end{figure}
