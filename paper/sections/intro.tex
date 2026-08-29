@@ -10,115 +10,115 @@
 \section{Introduction}
 \label{sec:intro}
 
-Multi-hop question answering requires an agent to acquire evidence
-sequentially: each retrieval exposes an intermediate entity that the next
-query depends on. Reinforcement learning has become the standard way to
-train such search agents---the policy interleaves reasoning, search, and
-answering over several turns, optimized with a group-relative estimator
-such as GRPO or leave-one-out
-REINFORCE~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}
-against a terminal reward for answer
-correctness~\citep{jin2025searchr1,chen2025research,song2025r1searcher,
-sun2025zerosearch}. This recipe improves aggregate accuracy, but its gains
-concentrate on shallow questions; on the deepest chains, where sequential
-evidence acquisition matters most, improvements remain modest.
+  Multi-hop question answering requires an agent to acquire evidence
+  sequentially: each retrieval exposes an intermediate entity that the next
+  query depends on. Reinforcement learning has become the standard way to
+  train such search agents---the policy interleaves reasoning, search, and
+  answering over several turns, optimized with a group-relative estimator
+  such as GRPO or leave-one-out
+  REINFORCE~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}
+  against a terminal reward for answer
+  correctness~\citep{jin2025searchr1,chen2025research,song2025r1searcher,
+  sun2026zerosearch}. This recipe improves aggregate accuracy, but its gains
+  concentrate on shallow questions; on the deepest chains, where sequential
+  evidence acquisition matters most, improvements remain modest.
 
-The standard diagnosis is temporal: rewards are sparse along the
-trajectory, so intermediate progress goes uncredited. We argue for a
-different, \emph{group-level} diagnosis. A group-relative estimator learns
-only from comparisons among the $K$ rollouts of the same question---and on
-hard questions, the terminal signal routinely fails to differ. In deep
-search this degenerate regime is not an occasional efficiency loss but the
-dominant case, and it worsens structurally with depth: on MuSiQue 4-hop
-questions, [84]\% of rollout groups are \emph{answer-tied}---every rollout
-wrong (or, rarely, every rollout right).\footnote{Measured on stratified
-closed-pool rollouts; see \S\ref{sec:mechanism} for the protocol.
-Percentages here are [K8-pending] preliminary values.} In an answer-tied
-group the terminal reward provides no within-group ordering whatsoever: it
-cannot prefer a rollout that recovered half of the required evidence chain
-over one that found nothing. What survives is worse than silence. The
-residual ranking signal inside an all-failure group comes from the cost
-and penalty terms---search cost, token cost, format penalties---which
-order trajectories by how \emph{cheaply} they failed. On precisely the
-questions where the agent most needs to learn persistence, the effective
-preference points toward giving up early.
+  The standard diagnosis is temporal: rewards are sparse along the
+  trajectory, so intermediate progress goes uncredited. We argue for a
+  different, \emph{group-level} diagnosis. A group-relative estimator learns
+  only from comparisons among the $K$ rollouts of the same question---and on
+  hard questions, the terminal signal routinely fails to differ. In deep
+  search this degenerate regime is not an occasional efficiency loss but the
+  dominant case, and it worsens structurally with depth: on MuSiQue 4-hop
+  questions, [84]\% of rollout groups are \emph{answer-tied}---every rollout
+  wrong (or, rarely, every rollout right).\footnote{Measured on stratified
+  closed-pool rollouts; see \S\ref{sec:mechanism} for the protocol.
+  Percentages here are [K8-pending] preliminary values.} In an answer-tied
+  group the terminal reward provides no within-group ordering whatsoever: it
+  cannot prefer a rollout that recovered half of the required evidence chain
+  over one that found nothing. What survives is worse than silence. The
+  residual ranking signal inside an all-failure group comes from the cost
+  and penalty terms---search cost, token cost, format penalties---which
+  order trajectories by how \emph{cheaply} they failed. On precisely the
+  questions where the agent most needs to learn persistence, the effective
+  preference points toward giving up early.
 
-This failure mode has recently been named in mathematical
-RLVR---\emph{advantage collapse}~\citep{hu2026avspo}---and existing
-mitigations fall into three families. Discarding methods drop or skip
-uniform-outcome groups by dynamic sampling or
-filtering~\citep{yu2025dapo,greso2025,downsampling2025}, recovering
-compute but abandoning exactly the hardest questions. Synthetic-advantage
-methods inject virtual reward samples so that collapsed groups still
-produce a learning signal~\citep{hu2026avspo}, but the signal is
-content-free: the ordering inside a tied group remains arbitrary.
-Structural methods re-baseline the comparison itself, stratifying
-advantages by trajectory structure~\citep{stratifiedgrpo2026} or comparing
-along shared tree prefixes~\citep{treegrpo2026}; this repairs
-cross-question fairness but leaves a fully tied group as uninformative as
-before. Leaving such groups to chance is not neutral: in GRPO training,
-whatever residual signal occupies an all-failure group can come to govern
-the learned policy outright~\citep{wang2026darkroom}. Tied groups should
-be neither thrown away nor filled with noise; what they need is an
-ordering that \emph{means} something.
+  This failure mode has recently been named in mathematical
+  RLVR---\emph{advantage collapse}~\citep{he2026collapse}---and existing
+  mitigations fall into three families. Discarding methods drop or skip
+  uniform-outcome groups by dynamic sampling or
+  filtering~\citep{yu2025dapo,greso2025,xu2026downsampling}, recovering
+  compute but abandoning exactly the hardest questions. Synthetic-advantage
+  methods inject virtual reward samples so that collapsed groups still
+  produce a learning signal~\citep{he2026collapse}, but the signal is
+  content-free: the ordering inside a tied group remains arbitrary.
+  Structural methods re-baseline the comparison itself, stratifying
+  advantages by trajectory structure~\citep{zhu2025grpo} or comparing
+  along shared tree prefixes~\citep{Ji2026tree}; this repairs
+  cross-question fairness but leaves a fully tied group as uninformative as
+  before. Leaving such groups to chance is not neutral: in GRPO training,
+  whatever residual signal occupies an all-failure group can come to govern
+  the learned policy outright~\citep{wang2026darkroom}. Tied groups should
+  be neither thrown away nor filled with noise; what they need is an
+  ordering that \emph{means} something.
 
-Standard multi-hop training sets already contain the information that
-breaks these ties: gold supporting documents~\citep{trivedi2022musique,
-yang2018hotpotqa}. We add to the trajectory return a
-\emph{completion-gated, first-hit evidence-coverage} term: a rollout is
-credited once for each gold document it retrieves (matched by title),
-normalized by the size of the gold set, and receives this credit only if
-it commits to an answer. The term is deterministic and judge-free,
-computed from training annotations alone---no learned scorer, no
-reference planner, and nothing required at test time. Under the
-trajectory-level group-relative estimator we use, this term does not
-perform step-level credit
-assignment~\citep{lightman2024verify,uesato2022solving}; its effect is
-simpler and, we argue, the one that matters: it \emph{restores
-within-group ranking}. Uniformly failing rollouts become ordered by how
-much of the required evidence they actually reached, rather than by how
-little they spent failing.
+  Standard multi-hop training sets already contain the information that
+  breaks these ties: gold supporting documents~\citep{trived2022musique,
+  yang2018hotpotqa}. We add to the trajectory return a
+  \emph{completion-gated, first-hit evidence-coverage} term: a rollout is
+  credited once for each gold document it retrieves (matched by title),
+  normalized by the size of the gold set, and receives this credit only if
+  it commits to an answer. The term is deterministic and judge-free,
+  computed from training annotations alone---no learned scorer, no
+  reference planner, and nothing required at test time. Under the
+  trajectory-level group-relative estimator we use, this term does not
+  perform step-level credit
+  assignment~\citep{lightman2024verify,uesato2022solving}; its effect is
+  simpler and, we argue, the one that matters: it \emph{restores
+  within-group ranking}. Uniformly failing rollouts become ordered by how
+  much of the required evidence they actually reached, rather than by how
+  little they spent failing.
 
-Our experiments on MuSiQue with a Qwen3.5-9B policy yield four findings.
-\textbf{First}, coverage shaping delivers consistent deep-hop gains:
-across explicit-seed training runs, 4-hop exact match improves by
-[+2.7 to +7.2] points over an outcome-only counterpart trained
-identically, overall EM moves in the same direction in every run, and
-4-hop search counts do not increase---the gain is not bought with a larger
-search budget. \textbf{Second}, a group-level audit locates the gain:
-adding coverage restores meaningful ranking in [31--46]\% of all-failure
-groups, expanding the fraction of 4-hop groups with informative
-within-group ordering by [$\times$3.0]---exactly where the terminal
-signal is most starved. \textbf{Third}, the benefit has an informative
-boundary: gains transfer zero-shot to 2WikiMultihopQA, whose questions
-share the deep compositional structure the reward targets, stay small on
-predominantly two-hop HotpotQA, and vanish on open-corpus MuSiQue, where
-the bottleneck is whether evidence can be \emph{reached} by retrieval at
-all rather than whether reached evidence is preferred. Evidence-coverage
-rewards fix a discrimination problem; they cannot fix a reachability
-problem. \textbf{Fourth}, the same signal that helps as a training reward
-and as an offline audit yields no reliable gain as a runtime controller
-or as an injected observation under matched controls: evidence
-supervision is placement-sensitive.
+  Our experiments on MuSiQue with a Qwen3.5-9B policy yield four findings.
+  \textbf{First}, coverage shaping delivers consistent deep-hop gains:
+  across explicit-seed training runs, 4-hop exact match improves by
+  [+2.7 to +7.2] points over an outcome-only counterpart trained
+  identically, overall EM moves in the same direction in every run, and
+  4-hop search counts do not increase---the gain is not bought with a larger
+  search budget. \textbf{Second}, a group-level audit locates the gain:
+  adding coverage restores meaningful ranking in [31--46]\% of all-failure
+  groups, expanding the fraction of 4-hop groups with informative
+  within-group ordering by [$\times$3.0]---exactly where the terminal
+  signal is most starved. \textbf{Third}, the benefit has an informative
+  boundary: gains transfer zero-shot to 2WikiMultihopQA, whose questions
+  share the deep compositional structure the reward targets, stay small on
+  predominantly two-hop HotpotQA, and vanish on open-corpus MuSiQue, where
+  the bottleneck is whether evidence can be \emph{reached} by retrieval at
+  all rather than whether reached evidence is preferred. Evidence-coverage
+  rewards fix a discrimination problem; they cannot fix a reachability
+  problem. \textbf{Fourth}, the same signal that helps as a training reward
+  and as an offline audit yields no reliable gain as a runtime controller
+  or as an injected observation under matched controls: evidence
+  supervision is placement-sensitive.
 
-Our contributions:
-\begin{itemize}\setlength\itemsep{2pt}
-\item \textbf{A group-level diagnosis.} Answer-tied groups dominate
-  deep-search RL ([75/71/84]\% at 2/3/4 hops) and carry a perverse
-  cost-driven residual ordering---an account of deep-hop stagnation that
-  temporal sparsity does not capture, complementing advantage-collapse
-  analyses in mathematical RLVR~\citep{yu2025dapo,hu2026avspo}
-  (\S\ref{sec:starvation}).
-\item \textbf{A trajectory-ranking repair.} Completion-gated first-hit
-  coverage---deterministic, judge-free, training-time-only---restores
-  meaningful within-group preferences where prior mitigations discard,
-  synthesize, or re-baseline (\S\ref{sec:method}).
-\item \textbf{Deep-hop gains with a mapped boundary.} Consistent 4-hop
-  improvements across explicit seeds without search inflation; transfer
-  governed by compositional match and retrieval reachability
-  (\S\ref{sec:results}, \S\ref{sec:transfer}).
-\item \textbf{A signal-placement study.} The same evidence signal helps
-  in training and offline audit but not as runtime control or injected
-  observation---negative results reported with stopping criteria fixed in
-  advance (\S\ref{sec:placement}).
-\end{itemize}
+  Our contributions:
+  \begin{itemize}\setlength\itemsep{2pt}
+  \item \textbf{A group-level diagnosis.} Answer-tied groups dominate
+    deep-search RL ([75/71/84]\% at 2/3/4 hops) and carry a perverse
+    cost-driven residual ordering---an account of deep-hop stagnation that
+    temporal sparsity does not capture, complementing advantage-collapse
+    analyses in mathematical RLVR~\citep{yu2025dapo,he2026collapse}
+    (\S\ref{sec:starvation}).
+  \item \textbf{A trajectory-ranking repair.} Completion-gated first-hit
+    coverage---deterministic, judge-free, training-time-only---restores
+    meaningful within-group preferences where prior mitigations discard,
+    synthesize, or re-baseline (\S\ref{sec:method}).
+  \item \textbf{Deep-hop gains with a mapped boundary.} Consistent 4-hop
+    improvements across explicit seeds without search inflation; transfer
+    governed by compositional match and retrieval reachability
+    (\S\ref{sec:results}, \S\ref{sec:transfer}).
+  \item \textbf{A signal-placement study.} The same evidence signal helps
+    in training and offline audit but not as runtime control or injected
+    observation---negative results reported with stopping criteria fixed in
+    advance (\S\ref{sec:placement}).
+  \end{itemize}
