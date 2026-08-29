@@ -1,0 +1,103 @@
+% ============================================================
+% Section 4 — Coverage-Augmented Trajectory Ranking (draft v1, 2026-08-28)
+% 依据: PAPER_OUTLINE_BETA §6-"4" + Non-Claims 纪律
+% 超参具体值引至附录 C(β=0.3, λ_s=0.015, token 计价 1e-3, KL 0.02/0.5)
+% ============================================================
+
+\section{Coverage-Augmented Trajectory Ranking}
+\label{sec:method}
+
+\subsection{Reward definition}
+\label{sec:method-reward}
+
+Each rollout $\tau$ receives a scalar trajectory return
+\begin{equation}
+R(\tau) \;=\; R_{\mathrm{ans}}(\tau)
+\;+\; \mathbb{1}\!\left[\mathrm{answered}(\tau)\right]\cdot \beta\, C(\tau)
+\;-\; \lambda_{s} N_{\mathrm{search}}(\tau)
+\;-\; P_{\mathrm{aux}}(\tau),
+\label{eq:reward}
+\end{equation}
+where $R_{\mathrm{ans}}$ is the terminal answer reward (alias-aware exact
+match against the gold answer set), $N_{\mathrm{search}}$ counts search
+calls, and $P_{\mathrm{aux}}$ collects format, turn-limit, and free-token
+penalties. The new term is the \emph{evidence-coverage} fraction
+\begin{equation}
+C(\tau) \;=\; \frac{\bigl|\{\, d \in \mathcal{G} :
+\tau \text{ retrieves } d \,\}\bigr|}{|\mathcal{G}|},
+\label{eq:coverage}
+\end{equation}
+where $\mathcal{G}$ is the question's annotated set of gold supporting
+documents, matched by document title. Each gold document is credited at
+most once, at its first retrieval (\emph{first-hit}); re-retrieving an
+already-credited document earns nothing, so the term rewards evidence
+\emph{progress}, not retrieval volume.
+
+Two design choices matter. \textbf{Completion gating}: the coverage
+credit is paid only if the rollout commits to an answer. Without the
+gate, a policy can farm evidence credit while abstaining---in early
+ungated runs we observed abstention rates rising alongside coverage
+reward, the expected signature of this arbitrage. Gating ties the
+process credit to the behavior the task actually demands.
+\textbf{Determinism}: coverage is a set intersection against training
+annotations. There is no learned scorer, no reference plan to align
+against, and no model in the reward loop; the same trajectory always
+receives the same credit, and nothing about the mechanism is needed at
+test time.
+
+\subsection{What the term does---and does not---do}
+\label{sec:method-effect}
+
+Coverage credit is emitted incrementally, at the turn where each first
+hit occurs. However, with discounting near one its trajectory sum equals
+$\beta\,C(\tau)$ up to negligible correction, and our estimator computes
+a single leave-one-out advantage per trajectory
+(\S\ref{sec:starvation}). The operative effect of the term is therefore
+on \emph{trajectory returns and their within-group ranking}, not on
+step-level credit assignment: we make no claim that individual turns are
+separately credited, and we do not use a process reward
+model~\citep{lightman2024verify,uesato2022solving}. Following the
+decomposition in \S\ref{sec:starvation}, the term's contribution to the
+relative advantage of rollout $i$ is
+$\beta\,\tfrac{K}{K-1}\bigl(C_i - \bar{C}\bigr)$: a common coverage
+offset cancels, and what remains is exactly the within-group ordering
+that terminal correctness cannot provide in an answer-tied group.
+Uniformly failing rollouts are thereby ranked by how much of the
+required evidence they reached, displacing the cost-driven ordering of
+\S\ref{sec:starvation}.
+
+\subsection{Stabilizing long-horizon optimization}
+\label{sec:method-kl}
+
+Trajectories mix two token populations: protocol actions (plan lines,
+search queries, answers) and free-form reasoning text. Reward pressure
+that leaks into the free-form channel inflates it---in our early runs,
+runaway growth of free-form tokens preceded every training collapse
+(forensics in Appendix~B). We therefore regularize the two channels
+separately: a weak KL coefficient on action tokens, which leaves the
+policy room to learn search behavior, and a strong KL coefficient on
+free-form tokens, anchored to the SFT reference policy, which rarely
+emits free-form reasoning. We present this channel-specific KL as a
+stability component of the training recipe rather than a contribution:
+isolating its necessity would require a uniform-KL comparison that we
+do not perform.
+
+\subsection{Training procedure}
+\label{sec:method-algo}
+
+Each training step proceeds as follows.
+\begin{enumerate}\setlength\itemsep{1pt}
+\item Sample $K$ rollouts per question from the current policy under the
+  search protocol.
+\item Parse actions; execute searches against the environment; track
+  first-time gold-title hits per rollout.
+\item Compute trajectory returns by Eq.~\ref{eq:reward}, applying the
+  completion gate and cost terms.
+\item Compute leave-one-out advantages within each question group and
+  broadcast each trajectory's advantage to its tokens.
+\item Apply the policy-gradient update with channel-specific KL
+  regularization; a small auxiliary value head serves as a variance
+  monitor (Appendix~C).
+\end{enumerate}
+Hyperparameters, infrastructure, and guard criteria are given in
+Appendix~C.

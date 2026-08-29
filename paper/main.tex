@@ -30,28 +30,20 @@ Deep Multi-Hop Search}
 TODO: abstract (write last, per outline \S14).
 \end{abstract}
 
-\input{sections/intro}
-
-% ---- 待写章节(beta outline §6 结构)----
-% \input{sections/related}      % §2 Related Work
-% \input{sections/starvation}   % §3 Answer-Signal Starvation
-% \input{sections/method}       % §4 Coverage-Augmented Trajectory Ranking
-% \input{sections/setup}        % §5 Experimental Setup
-% \input{sections/results}      % §6 Does Coverage Improve Deep Search?
-% \input{sections/mechanism}    % §7 Why Does Coverage Help?
-% \input{sections/transfer}     % §8 Where Does Coverage Transfer?
-% \input{sections/placement}    % §9 Where Should Evidence Signals Enter?
-% \input{sections/limitations}  % §10 Limitations
-% \input{sections/conclusion}   % §11 Conclusion
-
-% intro.tex 引用的 label 占位(章节文件落地后移除)
+% label 占位命令(章节文件落地后逐个替换为 \input)
 \newcommand{\stub}[2]{\section{#2}\label{#1}TODO.}
+
+\input{sections/intro}
+% \input{sections/related}      % §2 Related Work(最后写)
 \stub{sec:starvation}{Answer-Signal Starvation in Multi-Hop Search RL}
-\stub{sec:method}{Coverage-Augmented Trajectory Ranking}
+\input{sections/method}         % §4
+% \input{sections/setup}        % §5 Experimental Setup
 \stub{sec:results}{Does Coverage Improve Deep Search?}
 \stub{sec:mechanism}{Why Does Coverage Help?}
 \stub{sec:transfer}{Where Does Coverage Transfer?}
 \stub{sec:placement}{Where Should Evidence Signals Enter the Agent?}
+% \input{sections/limitations}  % §10 Limitations
+% \input{sections/conclusion}   % §11 Conclusion
 
 \bibliography{refs}
 
