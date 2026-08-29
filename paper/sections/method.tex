@@ -12,10 +12,12 @@
 
 Each rollout $\tau$ receives a scalar trajectory return
 \begin{equation}
-R(\tau) \;=\; R_{\mathrm{ans}}(\tau)
-\;+\; \mathbb{1}\!\left[\mathrm{answered}(\tau)\right]\cdot \beta\, C(\tau)
-\;-\; \lambda_{s} N_{\mathrm{search}}(\tau)
+\begin{split}
+R(\tau) \;=\;{}& R_{\mathrm{ans}}(\tau)
+\;+\; \mathbf{1}\!\left[\mathrm{ans}(\tau)\right]\, \beta\, C(\tau) \\
+&\;-\; \lambda_{s}\, N_{\mathrm{search}}(\tau)
 \;-\; P_{\mathrm{aux}}(\tau),
+\end{split}
 \label{eq:reward}
 \end{equation}
 where $R_{\mathrm{ans}}$ is the terminal answer reward (alias-aware exact
