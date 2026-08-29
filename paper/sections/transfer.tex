@@ -1,0 +1,112 @@
+% ============================================================
+% Section 8 — Where Does Coverage Transfer? (draft v1, 2026-08-29)
+% 数据: HANDOFF §10d(开放域配对消融)+ §13(可达性分解)
+% 注意: 开放域配对目前为单配对(run7 vs noshape, ep100); 多种子配对在闭池 §6
+% ============================================================
+
+\section{Where Does Coverage Transfer?}
+\label{sec:transfer}
+
+Coverage shaping is trained in a closed pool, where every gold document
+is reachable by construction. What survives outside? We evaluate the
+matched pair of \S\ref{sec:setup-comparisons} (coverage-shaped versus
+outcome-only, identical schedule) zero-shot under the unified
+open-corpus retrieval environment, on open-corpus MuSiQue, HotpotQA, and
+2WikiMultihopQA.
+
+\subsection{Transfer is structure-dependent}
+\label{sec:transfer-results}
+
+Table~\ref{tab:open-paired} reports the paired comparison. The effect
+does not transfer uniformly, and we make no universal open-corpus
+claim. On open MuSiQue the closed-pool gains attenuate to
+non-significance (overall $z=-1.41$; the 4-hop gain of
+\S\ref{sec:results} goes to $z=+0.26$). On HotpotQA the aggregate is
+flat, with a negative trend on bridge questions. The effect survives,
+significantly, in two places: HotpotQA \emph{comparison} questions
+($+4.75$, $z=+3.80$) and 2WikiMultihopQA overall ($+2.05$, $z=+3.01$;
+4-hop $+4.52$, $z=+2.39$)---precisely the structures whose questions
+require assembling several parallel evidence branches, where
+completeness of the evidence set is the binding skill. We recorded this
+directional expectation---that the effect should survive on
+parallel-branch, completeness-bottleneck structures---before the 2Wiki
+numbers were computed, and it held. Two further observations decouple
+the pieces: reinforcement learning's overall open-corpus improvement
+does not depend on shaping (outcome-only RL beats SFT at $z=+2.49$),
+and the shaped policy reaches parity on open MuSiQue while searching
+about 7\% less (3.47 vs.\ 3.75 calls per question)---the completeness
+discipline is retained even where it cannot raise accuracy.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccr}
+\toprule
+Open-corpus setting & +Cov. & Outcome & paired $z$ \\
+\midrule
+MuSiQue (2{,}417)      & 25.69 & 26.40 & $-1.41$ \\
+\quad 4-hop            & 11.11 & 10.86 & $+0.26$ \\
+HotpotQA (2{,}000)     & 46.40 & 46.30 & $+0.19$ \\
+\quad bridge           & 41.13 & 42.19 & $-1.78$ \\
+\quad comparison       & \textbf{67.50} & 62.75 & $\mathbf{+3.80}$ \\
+2Wiki (2{,}000)        & \textbf{39.95} & 37.90 & $\mathbf{+3.01}$ \\
+\quad 4-hop            & \textbf{33.03} & 28.51 & $\mathbf{+2.39}$ \\
+\bottomrule
+\end{tabular}
+\caption{Zero-shot open-corpus transfer of coverage shaping: one
+matched pair (identical seed lineage and schedule), question-level
+paired McNemar $z$. Gains survive where evidence completeness is the
+binding skill and vanish where retrieval reachability binds.}
+\label{tab:open-paired}
+\end{table}
+
+\subsection{The boundary is reachability, measured}
+\label{sec:transfer-reach}
+
+Why does the deep-hop effect, causal in the closed pool, go to zero on
+open MuSiQue? Decompose success as
+\[
+P(\text{correct}) \;=\; P(\text{evidence reachable})\times
+P(\text{correct}\mid\text{reachable}),
+\]
+and measure the first factor directly against the open corpus.
+Table~\ref{tab:reach} reports gold-title coverage of top-10 retrieval
+under two query regimes: the question itself (naive), and an
+\emph{oracle} decomposition using the official sub-questions with gold
+intermediate answers substituted in---an upper bound no policy can
+exceed.\footnote{Title matching across corpus versions is exact, so all
+reachability numbers are lower bounds.} At four hops, naive queries
+reach the complete gold set for 0.2\% of questions; even oracle
+sub-queries reach it for only 15.6\%. In the training pool, that number
+is 100\% by construction. The skill coverage shaping trains---finish
+the evidence chain before answering---has no purchase on questions
+where finishing the chain is physically impossible for the retriever,
+which at four hops is more than 84\% of them. Consistently, the shaped
+policy's open-corpus 4-hop accuracy (11.1\%) already sits near the
+oracle full-evidence ceiling. Coverage rewards repair a discrimination
+problem; on open MuSiQue the binding problem is reachability, and no
+trajectory-ranking signal can repair that. Where structure keeps
+evidence reachable---2Wiki's parallel branches, Hotpot
+comparisons---the discipline continues to pay
+(Table~\ref{tab:open-paired}).
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+ & 2-hop & 3-hop & 4-hop \\
+\midrule
+Naive query, mean coverage@10   & 0.367 & 0.193 & 0.065 \\
+Naive query, full gold set reached  & 11.3\% & 0.4\% & 0.2\% \\
+Oracle sub-queries, mean coverage@10 & 0.660 & 0.632 & 0.559 \\
+Oracle sub-queries, full set reached & 43.8\% & 24.9\% & \textbf{15.6\%} \\
+\bottomrule
+\end{tabular}
+\caption{Evidence reachability on the open corpus (full MuSiQue dev,
+top-10 dense retrieval). Even ideal decomposed queries with gold
+bindings cannot assemble the complete evidence set for most deep
+questions; the closed training pool is 100\% reachable by
+construction.}
+\label{tab:reach}
+\end{table}
