@@ -29,11 +29,14 @@
   only from comparisons among the $K$ rollouts of the same question---and on
   hard questions, the terminal signal routinely fails to differ. In deep
   search this degenerate regime is not an occasional efficiency loss but the
-  dominant case, and it worsens structurally with depth: on MuSiQue 4-hop
-  questions, [84]\% of rollout groups are \emph{answer-tied}---every rollout
-  wrong (or, rarely, every rollout right).\footnote{Measured on stratified
-  closed-pool rollouts; see \S\ref{sec:mechanism} for the protocol.
-  Percentages here are [K8-pending] preliminary values.} In an answer-tied
+  dominant case: at the initialization training starts from, 56--71\% of
+  rollout groups are \emph{answer-tied} across depths. Depth changes the
+  ties' character more than their count---at two hops many ties are
+  benign, every rollout right, while on 4-hop questions benign ties all
+  but vanish and 57\% of all groups are uniformly
+  wrong.\footnote{Measured at the SFT initialization with $K{=}8$ rollouts
+  at the training temperature; protocol in \S\ref{sec:mechanism}.} In an
+  answer-tied
   group the terminal reward provides no within-group ordering whatsoever: it
   cannot prefer a rollout that recovered half of the required evidence chain
   over one that found nothing. What survives is worse than silence. The
@@ -86,10 +89,10 @@
   identically, overall EM moves in the same direction in every run, and
   4-hop search counts do not increase---the gain is not bought with a larger
   search budget. \textbf{Second}, a group-level audit locates the gain:
-  adding coverage restores meaningful ranking in [31--46]\% of all-failure
-  groups, expanding the fraction of 4-hop groups with informative
-  within-group ordering by [$\times$3.0]---exactly where the terminal
-  signal is most starved. \textbf{Third}, the benefit has an informative
+  at the training start, 89\% of 4-hop answer-tied groups carry coverage
+  variation the terminal reward cannot see, and adding coverage expands
+  the share of 4-hop groups with informative within-group ordering from
+  38\% to 93\%---exactly where the terminal signal is most starved. \textbf{Third}, the benefit has an informative
   boundary: gains transfer zero-shot to 2WikiMultihopQA, whose questions
   share the deep compositional structure the reward targets, stay small on
   predominantly two-hop HotpotQA, and vanish on open-corpus MuSiQue, where
@@ -104,8 +107,10 @@
   Our contributions:
   \begin{itemize}\setlength\itemsep{2pt}
   \item \textbf{A group-level diagnosis.} Answer-tied groups dominate
-    deep-search RL ([75/71/84]\% at 2/3/4 hops) and carry a perverse
-    cost-driven residual ordering---an account of deep-hop stagnation that
+    deep-search RL (56--71\% of groups), shift with depth from benign
+    all-correct ties to starved all-wrong ties (57\% of 4-hop groups),
+    and carry a perverse cost-driven residual ordering---an account of
+    deep-hop stagnation that
     temporal sparsity does not capture, complementing advantage-collapse
     analyses in mathematical RLVR~\citep{yu2025dapo,he2026collapse}
     (\S\ref{sec:starvation}).

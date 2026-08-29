@@ -45,14 +45,17 @@ regardless of how differently the rollouts behaved. The group is not
 gradient-free---cost terms still differ across rollouts---but it is
 \emph{answer-blind}: terminal correctness supplies zero discrimination.
 
-How often does this happen? We sample $K$ rollouts per question at the
-training temperature on a stratified question set and count tied groups
-(protocol in \S\ref{sec:mechanism}). Table~\ref{tab:tie-ledger} shows
-the result: ties are not an edge case but the dominant regime, and they
-grow with hop depth---at four hops, [84]\% of groups are answer-tied,
-[76]\% uniformly wrong.\footnote{[K8-pending] preliminary values; final
-numbers use $K{=}8$ and the SFT initialization matched to training.}
-The deeper the question, the less the terminal reward can say.
+How often does this happen? We sample $K{=}8$ rollouts per question at
+the training temperature from the SFT initialization---the policy that
+training actually starts from---on a stratified question set (protocol
+in \S\ref{sec:mechanism}). Table~\ref{tab:tie-ledger} shows the result:
+ties are not an edge case but the dominant regime, 56--71\% of groups at
+every depth. Depth changes the ties' \emph{character} more than their
+count. At two hops a large share of ties is benign---every rollout
+right, nothing left to teach. At four hops the benign ties all but
+vanish (4.4\%), and the starved kind dominates: 57\% of all groups are
+uniformly wrong. The deeper the question, the less the terminal reward
+can say precisely where there is the most left to learn.
 
 \begin{table}[t]
 \centering
@@ -61,14 +64,16 @@ The deeper the question, the less the terminal reward can say.
 \toprule
  & 2-hop & 3-hop & 4-hop \\
 \midrule
-Answer-tied groups & [75]\% & [71]\% & [84]\% \\
-\quad all wrong    & [~~]\% & [~~]\% & [76]\% \\
-\quad all right    & [~~]\% & [~~]\% & [~~]\% \\
+Answer-tied groups & 70.6\% & 55.9\% & 61.8\% \\
+\quad all wrong    & 42.5\% & 46.6\% & 57.4\% \\
+\quad all right    & 28.1\% & ~9.4\% & ~4.4\% \\
 \bottomrule
 \end{tabular}
-\caption{The tie ledger: share of $K$-rollout groups in which terminal
-correctness provides no within-group ordering, by hop depth.
-[K8-pending placeholders.]}
+\caption{The tie ledger: share of $K{=}8$-rollout groups in which
+terminal correctness provides no within-group ordering, measured at the
+SFT initialization on stratified MuSiQue questions ($n{=}160/320/319$
+groups per hop). With depth, ties shift from benign (all right) to
+starved (all wrong).}
 \label{tab:tie-ledger}
 \end{table}
 
@@ -112,11 +117,16 @@ C_j\Bigr) \;=\; \beta\,\frac{K}{K-1}\bigl(C_i - \bar{C}\bigr)
 \end{equation}
 to the advantage: a common coverage offset cancels, and what remains is
 precisely a within-group ordering by evidence progress. This term is
-non-zero exactly when coverage varies inside the group---and it is in
-the all-failure groups, where the terminal reward is silent, that this
-variation carries otherwise-unused information. How often coverage
-actually varies there, and how the repair reshapes training, is the
-subject of \S\ref{sec:mechanism}.
+non-zero exactly when coverage varies inside the group---and that
+variation is concentrated where it is needed. At the SFT initialization,
+the share of answer-tied groups whose rollouts differ in coverage rises
+from 38.9\% at two hops to 64.8\% at three and 89.3\% at four: almost
+every deep tied group carries evidence-progress differences that the
+terminal reward cannot see. Counting a group as trainable when either
+signal discriminates, coverage expands the informative share of 4-hop
+groups from 38.2\% to 93.4\% ($\times$2.4). How this repair reshapes
+training, and how the ledger evolves over it, is the subject of
+\S\ref{sec:mechanism}.
 
 % ---- Fig 1 占位(fig_mechanism.py 待写: A=全错组内 outcome-only 按成本
 % 排序 vs +coverage 按证据进展排序的实例/相关面板; B=tie 账本柱状) ----
