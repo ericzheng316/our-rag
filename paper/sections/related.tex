@@ -1,0 +1,76 @@
+% ============================================================
+% Section 2 — Related Work (draft v1, 2026-08-31)
+% 依据: related_notes.md 划界表; 组织骨架 = 丢弃/合成/结构/内容 四分法
+% 冻稿前(notes 行动项): 精读 Search-P1 v1 + AVSPO 全文; 9 月新文献补扫
+% ============================================================
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{RL for search agents.} Multi-hop QA systems first
+interleaved retrieval with prompted
+reasoning~\citep{yao2023react,press2023measuring,trivedi2023interleaving};
+the current generation trains the interleaving itself with
+reinforcement learning. Search-R1~\citep{jin2025searchr1},
+ReSearch~\citep{chen2025research},
+R1-Searcher~\citep{song2025r1searcher},
+ZeroSearch~\citep{sun2026zerosearch}, and R3-RAG~\citep{li2025r3}
+all optimize a terminal answer reward with a group-relative
+policy-gradient estimator in the GRPO/RLOO
+family~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}. Our
+training loop belongs to this family; our subject is the estimator
+itself---what the within-group comparison learns from when the task
+is deep, and what it cannot.
+
+\paragraph{Process supervision and path rewards.} Process
+supervision scores intermediate steps with a learned reward
+model~\citep{lightman2024verify,uesato2022solving}. In search RL,
+StepSearch~\citep{zheng-etal-2025-stepsearch} attaches step-wise
+rewards built from information gain and redundancy penalties, and
+Search-P1~\citep{xia2026searchp1} scores trajectory paths against
+reference plans generated offline, extracting signal from failed
+rollouts through soft path alignment. Both supply per-step credit
+against a learned or model-generated referent. Our term differs on
+each axis: it is computed from the dataset's gold evidence
+annotations, involves no reference generator or scoring model, and
+acts on trajectory returns as a within-group ranking rather than as
+step-level credit (\S\ref{sec:method-effect}). Neither line analyzes
+when and why the terminal signal fails at the group level; that
+diagnosis (\S\ref{sec:starvation}) is what selects our term's
+placement and form. Classical shaping theory designs reward terms
+that leave the optimal policy invariant~\citep{ng1999policy}; ours is
+chosen for the opposite property---the change in within-group
+ordering is the point, and the ordering it displaces is the
+cost-driven one of \S\ref{sec:starve-cost}.
+
+\paragraph{Uninformative groups in group-relative RL.} Advantage
+collapse---groups whose identical rewards yield zero
+advantage---has been named and quantified in mathematical
+RLVR~\citep{he2026collapse}, and the existing responses form three
+families. \emph{Discard}: dynamic sampling and selective-rollout
+methods drop or skip uniform-outcome
+groups~\citep{yu2025dapo,greso2025,xu2026downsampling}, recovering
+compute at the price of abandoning the hardest questions.
+\emph{Synthesize}: virtual reward samples make collapsed groups emit
+gradient again~\citep{he2026collapse}; the magnitude returns, but the
+ordering within the group remains arbitrary. \emph{Restructure}:
+Stratified GRPO re-baselines advantages within structural
+strata~\citep{zhu2025grpo}, and Tree-GRPO compares trajectories along
+shared tree prefixes~\citep{Ji2026tree}; both repair cross-question
+comparability and leave a fully tied group as uninformative as
+before. \citet{wang2026darkroom} shows what happens when tied groups
+are left to chance: a dense self-prediction reward occupying
+all-failure groups drives a GRPO-trained agent into a degenerate
+absorbing state. Their amplification mechanism runs through z-score
+normalization, which our leave-one-out estimator does not use; the
+qualitative lesson---whatever residual signal occupies an
+all-failure group can come to govern the policy---is the one our
+cost pathology (\S\ref{sec:starve-cost}) instantiates with ordinary
+cost terms. We take a fourth option, \emph{content}: gold evidence
+annotations already present in multi-hop training data give tied
+groups an ordering that measures progress. Relative to the collapse
+literature, our diagnosis also adds what deep search changes: ties
+are the dominant regime rather than an occasional efficiency loss,
+their character shifts with depth from benign to starved, and the
+residual ordering is not noise but a systematic preference for cheap
+failure.
