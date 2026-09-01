@@ -73,12 +73,11 @@
   normalized by the size of the gold set, and receives this credit only if
   it commits to an answer. The term is deterministic and judge-free,
   computed from training annotations alone---no learned scorer, no
-  reference planner, and nothing required at test time. Under the
-  trajectory-level group-relative estimator we use, this term does not
-  perform step-level credit
-  assignment~\citep{lightman2024verify,uesato2022solving}; its effect is
-  simpler and, we argue, the one that matters: it \emph{restores
-  within-group ranking}. Uniformly failing rollouts become ordered by how
+  reference planner, and nothing required at test time. Under a
+  trajectory-level group-relative estimator the term acts on
+  whole-trajectory returns; its effect---simpler than step-level process
+  supervision~\citep{lightman2024verify,uesato2022solving}---is to
+  \emph{restore within-group ranking}. Uniformly failing rollouts become ordered by how
   much of the required evidence they actually reached, rather than by how
   little they spent failing.
 
@@ -124,6 +123,5 @@
     (\S\ref{sec:results}, \S\ref{sec:transfer}).
   \item \textbf{A signal-placement study.} The same evidence signal helps
     in training and offline audit but not as runtime control or injected
-    observation---negative results reported with stopping criteria fixed in
-    advance (\S\ref{sec:placement}).
+    observation (\S\ref{sec:placement}).
   \end{itemize}

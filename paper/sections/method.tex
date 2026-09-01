@@ -47,18 +47,18 @@ against, and no model in the reward loop; the same trajectory always
 receives the same credit, and nothing about the mechanism is needed at
 test time.
 
-\subsection{What the term does---and does not---do}
+\subsection{The term is a trajectory-ranking signal}
 \label{sec:method-effect}
 
 Coverage credit is emitted incrementally, at the turn where each first
-hit occurs. However, with discounting near one its trajectory sum equals
-$\beta\,C(\tau)$ up to negligible correction, and our estimator computes
+hit occurs. With discounting near one, its trajectory sum equals
+$\beta\,C(\tau)$ up to negligible correction, and the estimator computes
 a single leave-one-out advantage per trajectory
-(\S\ref{sec:starvation}). The operative effect of the term is therefore
-on \emph{trajectory returns and their within-group ranking}, not on
-step-level credit assignment: we make no claim that individual turns are
-separately credited, and we do not use a process reward
-model~\citep{lightman2024verify,uesato2022solving}. Following the
+(\S\ref{sec:starvation})---so the term acts on \emph{trajectory returns
+and their within-group ranking}. This is a different mechanism from
+step-level process supervision~\citep{lightman2024verify,
+uesato2022solving}, and a simpler one: no per-turn credit model is
+involved anywhere. Following the
 decomposition in \S\ref{sec:starvation}, the term's contribution to the
 relative advantage of rollout $i$ is
 $\beta\,\tfrac{K}{K-1}\bigl(C_i - \bar{C}\bigr)$: a common coverage
