@@ -41,11 +41,9 @@ gate, a policy can farm evidence credit while abstaining---in early
 ungated runs we observed abstention rates rising alongside coverage
 reward, the expected signature of this arbitrage. Gating ties the
 process credit to the behavior the task actually demands.
-\textbf{Determinism}: coverage is a set intersection against training
-annotations, so the same trajectory always receives the same credit,
-and there is no model in the reward loop to drift, disagree with
-itself, or be exploited. At test time the mechanism costs nothing:
-the annotations are training-side only.
+\textbf{Determinism}: we compute coverage as the set overlap between
+retrieved evidence and the training annotations; the signal is
+deterministic and used only during training.
 
 \subsection{The term is a trajectory-ranking signal}
 \label{sec:method-effect}

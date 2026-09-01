@@ -71,9 +71,8 @@
   \emph{completion-gated, first-hit evidence-coverage} term: a rollout is
   credited once for each gold document it retrieves (matched by title),
   normalized by the size of the gold set, and receives this credit only if
-  it commits to an answer. The term is a set intersection with the
-  training annotations---deterministic, with no model in the reward
-  loop, and free at test time. Under a
+  it commits to an answer. The signal is deterministic and used only
+  during training. Under a
   trajectory-level group-relative estimator the term acts on
   whole-trajectory returns; its effect---simpler than step-level process
   supervision~\citep{lightman2024verify,uesato2022solving}---is to
