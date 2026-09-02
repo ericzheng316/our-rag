@@ -1,6 +1,8 @@
 % ============================================================
 % Section 3 — Answer-Signal Starvation (draft v1, 2026-08-29)
-% 占位: tie 账本表与成本相关面板数字 = [K8-pending]
+% tie 账本 = K=8 复算终值 (2026-08-30); 成本面板 ρ = analysis_cost_ordering.py
+%   (2026-09-01, 奖励逐字重放 sftv22 K=8 通道, 全错组 400/799;
+%    ρ(A,n_search)=-0.913 / 97% 组为负, ρ(A,cov)=+0.024 ≈ 盲)
 % Fig~\ref{fig:mechanism} 占位图环境在文末, 生成器 fig_mechanism.py 待写
 % ============================================================
 
@@ -94,9 +96,14 @@ less, generated less, and gave up sooner outranks the one that kept
 pursuing evidence---even if the latter recovered most of the required
 chain and the former recovered none. On the questions where persistence
 is the very skill to be learned, the effective training signal points
-the other way. Empirically, in all-failure groups from our outcome-only
-training logs, the advantage correlates [negatively] with search count
-($\rho = [~~]$; Fig.~\ref{fig:mechanism}A).\footnote{Our estimator is
+the other way. Empirically, replaying the outcome-only reward over the
+all-failure groups of the $K{=}8$ audit (\S\ref{sec:mechanism})
+measures both properties: the within-group advantage ranks rollouts
+almost purely by how little they searched (mean within-group Spearman
+$\rho = -0.91$ against search count, negative in 97\% of groups) and
+bears no relation to evidence coverage ($\rho = +0.02$). The ordering
+that survives punishes persistence and ignores progress
+(Fig.~\ref{fig:mechanism}A).\footnote{Our estimator is
 plain leave-one-out without group standard-deviation normalization;
 pathologies specific to $z$-scored advantages, where a vanishing group
 deviation can amplify an arbitrary residual signal without
