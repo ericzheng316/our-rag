@@ -23,7 +23,9 @@ R(\tau) \;=\;{}& R_{\mathrm{ans}}(\tau)
 where $R_{\mathrm{ans}}$ is the terminal answer reward (alias-aware exact
 match against the gold answer set), $N_{\mathrm{search}}$ counts search
 calls, and $P_{\mathrm{aux}}$ collects format, turn-limit, and free-token
-penalties. The new term is the \emph{evidence-coverage} fraction
+penalties; \emph{free tokens} are the tokens a rollout emits outside
+protocol actions (plan lines, search queries, answers). The new term is
+the \emph{evidence-coverage} fraction
 \begin{equation}
 C(\tau) \;=\; \frac{\bigl|\{\, d \in \mathcal{G} :
 \tau \text{ retrieves } d \,\}\bigr|}{|\mathcal{G}|},
@@ -81,34 +83,50 @@ of \S\ref{sec:starvation}.
 \subsection{Stabilizing long-horizon optimization}
 \label{sec:method-kl}
 
-Trajectories mix two token populations: protocol actions (plan lines,
-search queries, answers) and free-form reasoning text. We regularize
-the two channels separately: a weak KL coefficient on action tokens and
-a strong KL coefficient on free-form tokens, anchored to the SFT
-reference policy, which rarely emits free-form reasoning. Under a
-uniform coefficient, free-form tokens grow geometrically until training
-collapses, and interventions on the gradient channel---token pricing at
-several rates, full and asymmetric gradient masking---leave the growth
-rate unchanged (six runs, five interventions; Appendix~B). With split
-coefficients, free-form token counts stay flat over the full schedule.
-Re-anchoring the reference from the SFT policy to a mid-training
-checkpoint that reasons freely re-ignites inflation within seven
-episodes (mean free-form tokens $0.7 \rightarrow 7.2$); an
-otherwise-identical run that keeps the SFT anchor does not.
+Trajectories mix two token populations: protocol actions and free
+tokens. We regularize the two channels separately: a weak KL
+coefficient on action tokens and a strong KL coefficient on free
+tokens, both toward the SFT reference policy, which rarely emits free
+tokens. Under a uniform coefficient, free tokens grow geometrically
+until training collapses, and interventions on the gradient
+channel---token pricing at several rates, full and asymmetric gradient
+masking---leave the growth rate unchanged (six runs, five
+interventions; Fig.~\ref{fig:ftk}, Appendix~B). With split
+coefficients, free-token counts stay flat over the full schedule.
+Replacing the reference policy with a mid-training checkpoint that has
+a high free-token rate re-ignites inflation within seven episodes (mean
+free tokens per turn $0.7 \rightarrow 7.2$); an otherwise-identical run
+that keeps the SFT reference policy does not.
+% 原句(2026-09-03 M2/M3 前): "Trajectories mix two token populations:
+% protocol actions (plan lines, search queries, answers) and free-form
+% reasoning text. We regularize the two channels separately: a weak KL
+% coefficient on action tokens and a strong KL coefficient on free-form
+% tokens, anchored to the SFT reference policy, which rarely emits
+% free-form reasoning. ... Re-anchoring the reference from the SFT policy
+% to a mid-training checkpoint that reasons freely re-ignited inflation
+% within seven episodes (mean free-form tokens 0.7 -> 7.2), while an
+% otherwise-identical run that kept the SFT anchor trained without
+% incident."
 
-% ---- 图位(用户 2026-09-03): 4.3 与 4.4 之间放已画好的 KL 图 ----
-% 文件: paper_assets/fig_ftk_forensics.{pdf,png}(生成器 fig_ftk_forensics.py)
-% 内容: 每轮 free tokens(对数轴)随训练集数: no intervention / token cost /
-%       full grad-mask / asym grad-mask / re-anchored ref / two-tier KL(ours)
-% 待办: 图例 "two-tier KL anchor (ours)" 与 "re-anchored ref" 改成 reference
-%       措辞后再入稿; \label{fig:ftk} 供 4.3 正文引用。
-% \begin{figure}[t]\centering
+% ---- KL 图(用户 2026-09-03: 先放占位符) ----
+% 成图: paper_assets/fig_ftk_forensics.{pdf,png}(生成器 fig_ftk_forensics.py)
+% 每轮 free tokens(对数轴)随训练集数: no intervention / token cost /
+% full grad-mask / asym grad-mask / replaced reference / two-tier KL(ours)
+% 入稿前: 图例 "two-tier KL anchor (ours)"、"re-anchored ref" 改成 reference
+% 措辞; 然后把下面的 \fbox 占位换成
 % \includegraphics[width=\columnwidth]{../paper_assets/fig_ftk_forensics.pdf}
-% \caption{Free tokens per turn over training under a uniform KL
-% coefficient with five interventions, versus the two-tier KL toward the
-% SFT reference policy.}\label{fig:ftk}
-% \end{figure}
-% -------------------------------------------------------------------
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.95\columnwidth}{\centering\vspace{2em}
+[Figure placeholder: free tokens per turn (log scale) over training
+episodes---uniform KL with no intervention, token cost, full and
+asymmetric gradient masking, replaced reference policy; two-tier KL
+toward the SFT reference policy.]\vspace{2em}}}
+\caption{Free tokens per turn over training under a uniform KL
+coefficient with five interventions, versus the two-tier KL toward the
+SFT reference policy. [Placeholder.]}
+\label{fig:ftk}
+\end{figure}
 
 \subsection{Training procedure}
 \label{sec:method-algo}
