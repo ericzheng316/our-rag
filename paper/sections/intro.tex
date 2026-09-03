@@ -26,25 +26,25 @@
   The standard diagnosis is temporal: rewards are sparse along the
   trajectory, so intermediate progress goes uncredited. We argue for a
   different, \emph{group-level} diagnosis. A group-relative estimator learns
-  only from comparisons among the $K$ rollouts of the same question---and on
-  hard questions, the terminal signal routinely fails to differ. In deep
-  search this degenerate regime is not an occasional efficiency loss but the
-  dominant case: at the initialization training starts from, 56--71\% of
-  rollout groups are \emph{answer-tied} across depths. Depth changes the
-  ties' character more than their count---at two hops many ties are
-  benign, every rollout right, while on 4-hop questions benign ties all
-  but vanish and 57\% of all groups are uniformly
+  only from comparisons among the $K$ rollouts of the same question. On
+  hard questions the terminal reward routinely fails to differ: every
+  rollout is wrong, or every rollout is right. We call such a group
+  \emph{answer-tied}. In deep search this is the dominant case: at the
+  SFT initialization, 56--71\% of rollout groups are answer-tied at every
+  depth. Depth changes which kind of tie dominates. At two hops, 28\% of
+  groups are tied because every rollout is right; at four hops that share
+  falls to 4\%, and 57\% of all groups are tied because every rollout is
   wrong.\footnote{Measured at the SFT initialization with $K{=}8$ rollouts
   at the training temperature; protocol in \S\ref{sec:mechanism}.} In an
-  answer-tied
-  group the terminal reward provides no within-group ordering whatsoever: it
-  cannot prefer a rollout that recovered half of the required evidence chain
-  over one that found nothing. What survives is worse than silence. The
-  residual ranking signal inside an all-failure group comes from the cost
-  and penalty terms---search cost, token cost, format penalties---which
-  order trajectories by how \emph{cheaply} they failed. On precisely the
-  questions where the agent most needs to learn persistence, the effective
-  preference points toward giving up early.
+  answer-tied group the terminal reward is the same for all $K$ rollouts
+  and contributes nothing to any advantage: a rollout that retrieved half
+  of the gold evidence chain and one that retrieved none receive identical
+  reward. The ordering that would separate them---how much of the
+  evidence each rollout reached---is the signal this paper adds. What
+  remains in an all-wrong group is the cost terms---search cost, token
+  cost, format penalties---so the rollout that searched least ranks
+  highest. On the questions where the agent most needs to learn to keep
+  searching, the training signal rewards stopping early.
 
   This failure mode has recently been named in mathematical
   RLVR---\emph{advantage collapse}~\citep{he2026collapse}---and existing
@@ -68,11 +68,12 @@
   Standard multi-hop training sets already contain the information that
   breaks these ties: gold supporting documents~\citep{trived2022musique,
   yang2018hotpotqa}. We add to the trajectory return a
-  \emph{completion-gated, first-hit evidence-coverage} term: a rollout is
-  credited once for each gold document it retrieves (matched by title),
-  normalized by the size of the gold set, and receives this credit only if
-  it commits to an answer. The signal is deterministic and used only
-  during training. Under a
+  \emph{completion-gated, first-hit evidence-coverage} term. We compute
+  coverage as the set overlap between retrieved evidence and training
+  annotations; the signal is deterministic and used only during training.
+  A rollout is credited once for each gold document it retrieves,
+  normalized by the size of the gold set, and receives the credit only if
+  it commits to an answer. Under a
   trajectory-level group-relative estimator the term acts on
   whole-trajectory returns; its effect---simpler than step-level process
   supervision~\citep{lightman2024verify,uesato2022solving}---is to
@@ -80,46 +81,46 @@
   much of the required evidence they actually reached, rather than by how
   little they spent failing.
 
-  Our experiments on MuSiQue with a Qwen3.5-9B policy yield four findings.
+  Our experiments on MuSiQue with a Qwen3.5-9B policy yield three findings.
   \textbf{First}, coverage shaping delivers consistent deep-hop gains:
   across explicit-seed training runs, 4-hop exact match improves by
   [+2.7 to +7.2] points over an outcome-only counterpart trained
   identically, overall EM moves in the same direction in every run, and
-  4-hop search counts do not increase. \textbf{Second}, a group-level
-  audit locates the gain:
+  the shaped policy makes fewer search calls per question.
+  \textbf{Second}, a group-level audit locates the gain:
   at the training start, 89\% of 4-hop answer-tied groups carry coverage
   variation the terminal reward cannot see, and adding coverage expands
   the share of 4-hop groups with informative within-group ordering from
-  38\% to 93\%---exactly where the terminal signal is most starved. \textbf{Third}, the benefit has an informative
-  boundary: gains transfer zero-shot to 2WikiMultihopQA, whose questions
-  share the deep compositional structure the reward targets, stay small on
-  predominantly two-hop HotpotQA, and vanish on open-corpus MuSiQue, where
-  the bottleneck is whether evidence can be \emph{reached} by retrieval at
-  all rather than whether reached evidence is preferred. Evidence-coverage
-  rewards fix a discrimination problem; they cannot fix a reachability
-  problem. \textbf{Fourth}, the same signal that helps as a training reward
-  and as an offline audit yields no reliable gain as a runtime controller
-  or as an injected observation under matched controls: evidence
-  supervision is placement-sensitive.
+  38\% to 93\%---the depth at which all-wrong groups are most common.
+  \textbf{Third}, the gains transfer zero-shot: $+2.05$ EM on
+  2WikiMultihopQA ($+4.52$ at four hops) and $+4.75$ on HotpotQA
+  comparison questions, the structures that require assembling several
+  parallel evidence branches.
+  % 2026-09-02 用户决议: 安置研究(涉及自训 judge 模型)暂不进 intro 发现列表,
+  % 需要时取消注释并把上文 "three findings" 改回 "four"。
+  % \textbf{Fourth}, the same signal that helps as a training reward
+  % and as an offline audit yields no reliable gain as a runtime controller
+  % or as an injected observation: evidence supervision is
+  % placement-sensitive.
 
   Our contributions:
   \begin{itemize}\setlength\itemsep{2pt}
   \item \textbf{A group-level diagnosis.} Answer-tied groups dominate
-    deep-search RL (56--71\% of groups), shift with depth from benign
-    all-correct ties to starved all-wrong ties (57\% of 4-hop groups),
-    and carry a perverse cost-driven residual ordering---an account of
-    deep-hop stagnation that
+    deep-search RL (56--71\% of groups), shift with depth from all-right
+    ties to all-wrong ties (57\% of 4-hop groups), and carry a
+    cost-driven residual ordering that favors the rollout that searched
+    least---an account of deep-hop stagnation that
     temporal sparsity does not capture, complementing advantage-collapse
     analyses in mathematical RLVR~\citep{yu2025dapo,he2026collapse}
     (\S\ref{sec:starvation}).
   \item \textbf{A trajectory-ranking repair.} Completion-gated first-hit
-    coverage---deterministic, judge-free, training-time-only---restores
-    meaningful within-group preferences where prior mitigations discard,
-    synthesize, or re-baseline (\S\ref{sec:method}).
-  \item \textbf{Deep-hop gains with a mapped boundary.} Consistent 4-hop
-    improvements across explicit seeds without search inflation; transfer
-    governed by compositional match and retrieval reachability
-    (\S\ref{sec:results}, \S\ref{sec:transfer}).
+    coverage, deterministic and used only during training, restores
+    within-group ordering where prior mitigations discard, synthesize,
+    or re-baseline (\S\ref{sec:method}).
+  \item \textbf{Deep-hop gains that transfer.} Consistent 4-hop
+    improvements across explicit seeds with fewer search calls, and
+    zero-shot transfer to 2WikiMultihopQA and HotpotQA comparison
+    questions (\S\ref{sec:results}, \S\ref{sec:transfer}).
   \item \textbf{A signal-placement study.} The same evidence signal helps
     in training and offline audit but not as runtime control or injected
     observation (\S\ref{sec:placement}).
