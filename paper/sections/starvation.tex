@@ -25,7 +25,8 @@ R_{\mathrm{base}}(\tau) \;=\; R_{\mathrm{ans}}(\tau)
 \;-\; \lambda_{s} N_{\mathrm{search}}(\tau) \;-\; P_{\mathrm{aux}}(\tau),
 \label{eq:base-reward}
 \end{equation}
-a terminal correctness reward minus search, token, and format costs.
+a terminal reward for answer correctness minus search, token, and
+format costs.
 
 \subsection{Group-relative learning and answer-tied groups}
 \label{sec:starve-ties}
@@ -39,13 +40,12 @@ A_i \;=\; R_i \;-\; \frac{1}{K-1}\sum_{j\neq i} R_j ,
 \label{eq:rloo}
 \end{equation}
 so any reward component that is constant within the group cancels
-exactly. We call a group \emph{answer-tied} when all $K$ rollouts carry
-the same terminal correctness label---every rollout wrong or every
-rollout right. In an answer-tied group, $R_{\mathrm{ans}}$ is such a
-constant: it contributes nothing to the within-group ordering,
-regardless of how differently the rollouts behaved. The group is not
-gradient-free---cost terms still differ across rollouts---but it is
-\emph{answer-blind}: terminal correctness supplies zero discrimination.
+exactly. We call a group \emph{answer-tied} when all $K$ rollouts
+receive the same answer reward---every rollout wrong or every rollout
+right. In an answer-tied group, $R_{\mathrm{ans}}$ is such a constant:
+it cancels from every advantage in Eq.~\ref{eq:rloo}, and the group
+yields no gradient from answer correctness, however differently its
+rollouts behaved.
 
 How often does this happen? We sample $K{=}8$ rollouts per question at
 the training temperature from the SFT initialization on a stratified
@@ -71,7 +71,7 @@ Answer-tied groups & 70.6\% & 55.9\% & 61.8\% \\
 \bottomrule
 \end{tabular}
 \caption{The tie ledger: share of $K{=}8$-rollout groups in which
-terminal correctness provides no within-group ordering, measured at the
+the answer reward provides no within-group ordering, measured at the
 SFT initialization on stratified MuSiQue questions ($n{=}160/320/319$
 groups per hop). With depth, ties shift from all-right to all-wrong.}
 \label{tab:tie-ledger}

@@ -18,7 +18,7 @@ We sample $K{=}8$ rollouts per question at the training temperature
 from the SFT initialization on a stratified closed-pool question set
 ($n{=}160/320/319$ complete groups at 2/3/4 hops), compute each
 rollout's coverage by the reward's definition (\S\ref{sec:method}), and
-classify every group by its terminal outcomes and its within-group
+classify every group by its answer outcomes and its within-group
 coverage variation. The same audit is repeated on the trained policy to
 track how the ledger evolves (\S\ref{sec:mech-evolution}).
 
@@ -29,7 +29,7 @@ Table~\ref{tab:repair} extends the tie ledger of
 Table~\ref{tab:tie-ledger} with the repair. Under outcome-only reward,
 a group is informative exactly when it is mixed: 29--44\% of groups,
 and only 38.2\% at four hops. Counting a group as informative when
-either terminal correctness or coverage discriminates, the share at
+either the answer reward or coverage discriminates, the share at
 four hops rises to 93.4\%---a $\times$2.4 expansion, the largest of any
 depth. The raw material behind this is the variation documented in
 \S\ref{sec:starvation}: within answer-tied groups, the share whose
