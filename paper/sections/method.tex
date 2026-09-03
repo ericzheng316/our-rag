@@ -33,6 +33,9 @@ where $\mathcal{G}$ is the question's annotated set of gold supporting
 documents, matched by document title. Each gold document is credited at
 most once, at its first retrieval (\emph{first-hit}); re-retrieving an
 already-credited document earns nothing.
+% 原句(2026-09-02 清扫前): "... re-retrieving an already-credited document
+% earns nothing, so the term rewards evidence \emph{progress}, not retrieval
+% volume."
 
 \textbf{Completion gating}: the coverage credit is paid only if the
 rollout commits to an answer. Without the gate, an abstaining rollout
@@ -40,6 +43,16 @@ collects coverage credit; in ungated runs, abstention rates rose with
 coverage reward. \textbf{Determinism}: we compute coverage as the set
 overlap between retrieved evidence and the training annotations; the
 signal is deterministic and used only during training.
+% 原句(清扫前): "Two design choices matter. \textbf{Completion gating}: the
+% coverage credit is paid only if the rollout commits to an answer. Without
+% the gate, a policy can farm evidence credit while abstaining---in early
+% ungated runs we observed abstention rates rising alongside coverage
+% reward, the expected signature of this arbitrage. Gating ties the process
+% credit to the behavior the task actually demands. \textbf{Determinism}:
+% coverage is a set intersection against training annotations. There is no
+% learned scorer, no reference plan to align against, and no model in the
+% reward loop; the same trajectory always receives the same credit, and
+% nothing about the mechanism is needed at test time."
 
 \subsection{The term is a trajectory-ranking signal}
 \label{sec:method-effect}
@@ -52,6 +65,11 @@ a single leave-one-out advantage per trajectory
 and their within-group ranking}. Step-level process
 supervision~\citep{lightman2024verify,uesato2022solving} assigns credit
 per step; this term assigns credit per trajectory. Following the
+% 原句(清扫前): "The operative effect of the term is therefore on
+% \emph{trajectory returns and their within-group ranking}, not on
+% step-level credit assignment: we make no claim that individual turns are
+% separately credited, and we do not use a process reward
+% model~\citep{lightman2024verify,uesato2022solving}."
 decomposition in \S\ref{sec:starvation}, the term's contribution to the
 relative advantage of rollout $i$ is
 $\beta\,\tfrac{K}{K-1}\bigl(C_i - \bar{C}\bigr)$: a common coverage
@@ -77,6 +95,20 @@ Re-anchoring the reference from the SFT policy to a mid-training
 checkpoint that reasons freely re-ignites inflation within seven
 episodes (mean free-form tokens $0.7 \rightarrow 7.2$); an
 otherwise-identical run that keeps the SFT anchor does not.
+
+% ---- 图位(用户 2026-09-03): 4.3 与 4.4 之间放已画好的 KL 图 ----
+% 文件: paper_assets/fig_ftk_forensics.{pdf,png}(生成器 fig_ftk_forensics.py)
+% 内容: 每轮 free tokens(对数轴)随训练集数: no intervention / token cost /
+%       full grad-mask / asym grad-mask / re-anchored ref / two-tier KL(ours)
+% 待办: 图例 "two-tier KL anchor (ours)" 与 "re-anchored ref" 改成 reference
+%       措辞后再入稿; \label{fig:ftk} 供 4.3 正文引用。
+% \begin{figure}[t]\centering
+% \includegraphics[width=\columnwidth]{../paper_assets/fig_ftk_forensics.pdf}
+% \caption{Free tokens per turn over training under a uniform KL
+% coefficient with five interventions, versus the two-tier KL toward the
+% SFT reference policy.}\label{fig:ftk}
+% \end{figure}
+% -------------------------------------------------------------------
 
 \subsection{Training procedure}
 \label{sec:method-algo}
