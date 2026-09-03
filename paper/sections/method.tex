@@ -32,18 +32,14 @@ C(\tau) \;=\; \frac{\bigl|\{\, d \in \mathcal{G} :
 where $\mathcal{G}$ is the question's annotated set of gold supporting
 documents, matched by document title. Each gold document is credited at
 most once, at its first retrieval (\emph{first-hit}); re-retrieving an
-already-credited document earns nothing, so the term rewards evidence
-\emph{progress}, not retrieval volume.
+already-credited document earns nothing.
 
-Two design choices matter. \textbf{Completion gating}: the coverage
-credit is paid only if the rollout commits to an answer. Without the
-gate, a policy can farm evidence credit while abstaining---in early
-ungated runs we observed abstention rates rising alongside coverage
-reward, the expected signature of this arbitrage. Gating ties the
-process credit to the behavior the task actually demands.
-\textbf{Determinism}: we compute coverage as the set overlap between
-retrieved evidence and the training annotations; the signal is
-deterministic and used only during training.
+\textbf{Completion gating}: the coverage credit is paid only if the
+rollout commits to an answer. Without the gate, an abstaining rollout
+collects coverage credit; in ungated runs, abstention rates rose with
+coverage reward. \textbf{Determinism}: we compute coverage as the set
+overlap between retrieved evidence and the training annotations; the
+signal is deterministic and used only during training.
 
 \subsection{The term is a trajectory-ranking signal}
 \label{sec:method-effect}
@@ -53,41 +49,34 @@ hit occurs. With discounting near one, its trajectory sum equals
 $\beta\,C(\tau)$ up to negligible correction, and the estimator computes
 a single leave-one-out advantage per trajectory
 (\S\ref{sec:starvation})---so the term acts on \emph{trajectory returns
-and their within-group ranking}. This is a different mechanism from
-step-level process supervision~\citep{lightman2024verify,
-uesato2022solving}, and a simpler one: no per-turn credit model is
-involved anywhere. Following the
+and their within-group ranking}. Step-level process
+supervision~\citep{lightman2024verify,uesato2022solving} assigns credit
+per step; this term assigns credit per trajectory. Following the
 decomposition in \S\ref{sec:starvation}, the term's contribution to the
 relative advantage of rollout $i$ is
 $\beta\,\tfrac{K}{K-1}\bigl(C_i - \bar{C}\bigr)$: a common coverage
-offset cancels, and what remains is exactly the within-group ordering
-that terminal correctness cannot provide in an answer-tied group.
-Uniformly failing rollouts are thereby ranked by how much of the
-required evidence they reached, displacing the cost-driven ordering of
-\S\ref{sec:starvation}.
+offset cancels, and what remains is a within-group ordering by
+coverage. Uniformly failing rollouts are thereby ranked by how much of
+the required evidence they reached, displacing the cost-driven ordering
+of \S\ref{sec:starvation}.
 
 \subsection{Stabilizing long-horizon optimization}
 \label{sec:method-kl}
 
 Trajectories mix two token populations: protocol actions (plan lines,
-search queries, answers) and free-form reasoning text. Reward pressure
-that leaks into the free-form channel inflates it: under a uniform KL
-coefficient, every one of our six early training runs collapsed through
-runaway growth of free-form tokens, and five successive interventions on
-the gradient channel---token pricing at multiple rates, full and
-asymmetric gradient masking---left the geometric growth rate essentially
-unchanged (full forensics in Appendix~B). We therefore regularize the
-two channels separately: a weak KL coefficient on action tokens, which
-leaves the policy room to learn search behavior, and a strong KL
-coefficient on free-form tokens, anchored to the SFT reference policy,
-which rarely emits free-form reasoning. With the split coefficients in
-place, inflation stopped and training ran cleanly for the full schedule.
-A controlled comparison further shows that the anchor's \emph{identity}
-carries the effect: re-anchoring the reference from the SFT policy to a
-mid-training checkpoint that reasons freely re-ignited inflation within
-seven episodes (mean free-form tokens $0.7 \rightarrow 7.2$), while an
-otherwise-identical run that kept the SFT anchor trained without
-incident.
+search queries, answers) and free-form reasoning text. We regularize
+the two channels separately: a weak KL coefficient on action tokens and
+a strong KL coefficient on free-form tokens, anchored to the SFT
+reference policy, which rarely emits free-form reasoning. Under a
+uniform coefficient, free-form tokens grow geometrically until training
+collapses, and interventions on the gradient channel---token pricing at
+several rates, full and asymmetric gradient masking---leave the growth
+rate unchanged (six runs, five interventions; Appendix~B). With split
+coefficients, free-form token counts stay flat over the full schedule.
+Re-anchoring the reference from the SFT policy to a mid-training
+checkpoint that reasons freely re-ignites inflation within seven
+episodes (mean free-form tokens $0.7 \rightarrow 7.2$); an
+otherwise-identical run that keeps the SFT anchor does not.
 
 \subsection{Training procedure}
 \label{sec:method-algo}

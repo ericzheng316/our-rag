@@ -28,8 +28,7 @@ improvement lands where \S\ref{sec:starvation} locates the starved
 groups.
 
 The shaped policy also searches less at every depth: 4.70 versus 4.98
-calls per question overall, 6.21 versus 6.56 on 4-hop questions. The
-deep-hop gain comes with a smaller search budget, not a larger one.
+calls per question overall, 6.21 versus 6.56 on 4-hop questions.
 
 \begin{table}[t]
 \centering
@@ -50,8 +49,8 @@ Search calls / question & 4.70 & 4.98 & $-0.28$ & \\
 \caption{Coverage-shaped versus outcome-only RL: one matched pair
 (identical initialization, schedule, and data order), closed-pool
 MuSiQue dev, question-level paired McNemar $z$. The effect
-concentrates at four hops and does not buy its gain with additional
-search.}
+concentrates at four hops; the shaped arm makes fewer search calls per
+question.}
 \label{tab:main-pair}
 \end{table}
 
@@ -62,9 +61,8 @@ Replicating the shaped recipe under explicit seeds 1--3
 (\S\ref{sec:setup-model}) gives 47.12, 47.83, and 48.49 overall EM
 ($47.8 \pm 0.7$), with 4-hop EM 34.6, 33.3, and 38.0. A separate
 batch of same-seed reruns, which fixes the data order and varies only
-training stochasticity, spans $47.5 \pm 1.6$ (Appendix~D):
-cross-seed variation is no larger than the training noise at a fixed
-curriculum. Extended training past the fixed 100-episode endpoint
+training stochasticity, spans $47.5 \pm 1.6$ (Appendix~D). Extended
+training past the fixed 100-episode endpoint
 reaches 50.27 EM at episode 120 and degrades beyond it
 (Appendix~E).
 
@@ -76,12 +74,10 @@ reaches 50.27 EM at episode 120 and degrades beyond it
 \label{sec:results-ladder}
 
 Table~\ref{tab:ladder} places the result on the ladder of the same
-base model. Closed-book answering establishes that the questions are
-not in the 9B policy's parameters (4.8 EM); a single retrieval helps
-little (15.4); the search protocol alone, zero-shot, reaches 29.0
-with a 13.5\% invalid-output rate; SFT buys protocol reliability and
-34.5; outcome-only RL adds twelve points; coverage shaping adds its
-gain on top. At four hops the ladder runs
+base model. Closed-book answering reaches 4.8 EM; a single retrieval
+15.4; the search protocol alone, zero-shot, 29.0 with a 13.5\%
+invalid-output rate; SFT 34.5; outcome-only RL adds twelve points;
+coverage shaping adds 1.65 on top. At four hops the ladder runs
 $1.7 \rightarrow 7.9 \rightarrow 10.1 \rightarrow 24.9 \rightarrow
 30.6 \rightarrow 37.8$: the two RL rungs contribute most of the
 deep-hop capability, and the shaping term accounts for 7.2 points of

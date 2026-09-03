@@ -48,11 +48,10 @@ gradient-free---cost terms still differ across rollouts---but it is
 \emph{answer-blind}: terminal correctness supplies zero discrimination.
 
 How often does this happen? We sample $K{=}8$ rollouts per question at
-the training temperature from the SFT initialization---the policy that
-training actually starts from---on a stratified question set (protocol
-in \S\ref{sec:mechanism}). Table~\ref{tab:tie-ledger} shows the result:
-ties are not an edge case but the dominant regime, 56--71\% of groups at
-every depth. Depth changes the ties' \emph{character} more than their
+the training temperature from the SFT initialization on a stratified
+question set (protocol in \S\ref{sec:mechanism}).
+Table~\ref{tab:tie-ledger} shows the result: ties are the dominant
+regime, 56--71\% of groups at every depth. Depth changes the ties' \emph{character} more than their
 count. At two hops a large share of ties is benign---every rollout
 right, nothing left to teach. At four hops the benign ties all but
 vanish (4.4\%), and the starved kind dominates: 57\% of all groups are
@@ -103,13 +102,9 @@ almost purely by how little they searched (mean within-group Spearman
 $\rho = -0.91$ against search count, negative in 97\% of groups) and
 bears no relation to evidence coverage ($\rho = +0.02$). The ordering
 that survives punishes persistence and ignores progress
-(Fig.~\ref{fig:mechanism}A).\footnote{Our estimator is
-plain leave-one-out without group standard-deviation normalization;
-pathologies specific to $z$-scored advantages, where a vanishing group
-deviation can amplify an arbitrary residual signal without
-bound~\citep{wang2026darkroom}, do not apply directly. The qualitative
-point is shared: whatever signal remains in an all-failure group is the
-signal the group trains on.}
+(Fig.~\ref{fig:mechanism}A).\footnote{Eq.~\ref{eq:rloo} applies no
+group standard-deviation normalization; \citet{wang2026darkroom}
+analyze the $z$-scored case.}
 
 \subsection{Coverage restores a meaningful ordering}
 \label{sec:starve-fix}
@@ -123,9 +118,8 @@ C_j\Bigr) \;=\; \beta\,\frac{K}{K-1}\bigl(C_i - \bar{C}\bigr)
 \label{eq:cov-advantage}
 \end{equation}
 to the advantage: a common coverage offset cancels, and what remains is
-precisely a within-group ordering by evidence progress. This term is
-non-zero exactly when coverage varies inside the group---and that
-variation is concentrated where it is needed. At the SFT initialization,
+a within-group ordering by evidence progress. This term is non-zero
+exactly when coverage varies inside the group. At the SFT initialization,
 the share of answer-tied groups whose rollouts differ in coverage rises
 from 38.9\% at two hops to 64.8\% at three and 89.3\% at four: almost
 every deep tied group carries evidence-progress differences that the

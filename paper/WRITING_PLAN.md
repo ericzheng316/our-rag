@@ -69,6 +69,7 @@ b
 - [ ] K=8 复算替换全部 [K8] 占位;AUC 用 tie-aware 实现
 - [ ] reachability 分解完成,否则 §8 降格为描述、标题候选里删 reachability 字样
 - [ ] 全文无 "zero gradient" / 无步级信用暗示 / 无 "pre-registered"(用 stopping criteria fixed in advance)
+- [x] 防御 / 提前 rebuttal 句式全文清扫第一遍(2026-09-02,§1–§9,约 40 处);新写的 §10/§11/摘要按同一标准起草,冻稿前再扫一遍
 - [ ] ep100 固定检查点为主行,ep120 沉附录
 - [ ] Table 4 图注挂全 caveat(底座/亲训/复现锚);StepSearch 补自报数脚注
 - [ ] 教师披露 + 种子账目按 HANDOFF §10c/§11 口径

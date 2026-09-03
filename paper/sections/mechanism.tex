@@ -7,10 +7,9 @@
 \section{Why Does Coverage Help?}
 \label{sec:mechanism}
 
-The ablation in \S\ref{sec:results} establishes \emph{that} coverage
-shaping improves deep-hop accuracy; this section asks \emph{why}, by
-auditing what the term changes about the groups the estimator learns
-from.
+Section~\ref{sec:results} measures the effect of coverage shaping on
+deep-hop accuracy; this section audits what the term changes about the
+groups the estimator learns from.
 
 \subsection{Audit protocol}
 \label{sec:mech-protocol}
@@ -18,7 +17,7 @@ from.
 We sample $K{=}8$ rollouts per question at the training temperature
 from the SFT initialization on a stratified closed-pool question set
 ($n{=}160/320/319$ complete groups at 2/3/4 hops), compute each
-rollout's coverage exactly as the reward does (\S\ref{sec:method}), and
+rollout's coverage by the reward's definition (\S\ref{sec:method}), and
 classify every group by its terminal outcomes and its within-group
 coverage variation. The same audit is repeated on the trained policy to
 track how the ledger evolves (\S\ref{sec:mech-evolution}).
@@ -60,41 +59,30 @@ outcomes are most often uniformly wrong.}
 \label{tab:repair}
 \end{table}
 
-\subsection{What coverage is not: a correctness predictor}
+\subsection{Coverage measures progress, not correctness}
 \label{sec:mech-not}
 
-It is tempting to read coverage as a proxy for answer correctness. The
-data reject this reading, and the distinction matters. Within mixed
-groups---the only place the question is even defined---ranking rollouts
-by coverage barely identifies the correct ones: tie-aware within-group
-AUC is 0.62/0.59/0.56 at 2/3/4 hops at the SFT initialization, and
-lower still after training.\footnote{Computed with average-rank tie
-handling; coverage values are coarse, and naive rank implementations
-inflate these numbers substantially.} Coverage is weakly informative
-about \emph{who answers correctly}, and this is consistent with our
-finding that coverage-based reranking of rollouts at inference time
-yields no reliable gain (\S\ref{sec:placement}). What coverage measures
-is \emph{progress through the annotated evidence chain}---a quantity
-that is meaningful as supervision precisely because it comes from gold
-annotations rather than from a prediction of correctness. Its
-legitimate validation is therefore not predictive power but the causal
-ablation of \S\ref{sec:results}: ordering failed rollouts by evidence
-progress trains a better deep-hop policy. (Coverage does stratify risk
-usefully \emph{across} questions; that distinct, diagnostic use is
-taken up in \S\ref{sec:placement}.)
+Coverage is a weak predictor of answer correctness. Within mixed
+groups, where the question is defined, tie-aware within-group AUC of
+coverage against correctness is 0.62/0.59/0.56 at 2/3/4 hops at the
+SFT initialization, and lower after training.\footnote{Average-rank tie
+handling; coverage values are coarse.} Reranking sampled rollouts by
+coverage at inference time yields no reliable gain
+(\S\ref{sec:placement}). What coverage measures is \emph{progress
+through the annotated evidence chain}; its effect as a training signal
+is the matched comparison of \S\ref{sec:results}. Across questions,
+coverage stratifies risk (\S\ref{sec:placement}).
 
 \subsection{Starvation persists throughout training}
 \label{sec:mech-evolution}
 
-One might hope ties are a cold-start artifact that training dissolves.
-They are not: auditing the trained policy, answer-tied groups remain
-the majority at every depth ([55.2]\% at four hops, [42.6]\% uniformly
-wrong), and the informative-share expansion from coverage remains
+Auditing the trained policy, answer-tied groups remain the majority at
+every depth ([55.2]\% at four hops, [42.6]\% uniformly wrong), and the
+informative-share expansion from coverage remains
 [$\times$2.1].\footnote{[K6-partial] Trained-policy numbers currently
-use 6 of 8 sampling channels; final numbers will use all 8.} The
-starvation that coverage repairs is a standing property of deep search
-under terminal rewards, not a transient of initialization---the repair
-pays throughout the schedule.
+use 6 of 8 sampling channels; final numbers will use all 8.} Starvation
+is a standing property of deep search under terminal rewards, not a
+transient of initialization.
 
 \subsection{The mechanism, end to end}
 \label{sec:mech-chain}

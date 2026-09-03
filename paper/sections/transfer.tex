@@ -24,17 +24,13 @@ non-significance (overall $z=-1.41$; the 4-hop gain of
 flat, with a negative trend on bridge questions. The effect survives,
 significantly, in two places: HotpotQA \emph{comparison} questions
 ($+4.75$, $z=+3.80$) and 2WikiMultihopQA overall ($+2.05$, $z=+3.01$;
-4-hop $+4.52$, $z=+2.39$)---precisely the structures whose questions
-require assembling several parallel evidence branches, where
-completeness of the evidence set is the binding skill. We recorded this
-directional expectation---that the effect should survive on
-parallel-branch, completeness-bottleneck structures---before the 2Wiki
-numbers were computed, and it held. Two further observations decouple
-the pieces: reinforcement learning's overall open-corpus improvement
-does not depend on shaping (outcome-only RL beats SFT at $z=+2.49$),
-and the shaped policy reaches parity on open MuSiQue while searching
-about 7\% less (3.47 vs.\ 3.75 calls per question)---the completeness
-discipline is retained even where it cannot raise accuracy.
+4-hop $+4.52$, $z=+2.39$)---the structures whose questions require
+assembling several parallel evidence branches, where completeness of
+the evidence set is the binding skill. Two further observations:
+outcome-only RL beats SFT on the open corpus ($z=+2.49$), so the
+open-corpus improvement from RL does not depend on shaping; and the
+shaped policy reaches parity on open MuSiQue while searching about 7\%
+less (3.47 vs.\ 3.75 calls per question).
 
 \begin{table}[t]
 \centering

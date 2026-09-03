@@ -30,18 +30,15 @@ rewards built from information gain and redundancy penalties, and
 Search-P1~\citep{xia2026searchp1} scores trajectory paths against
 reference plans generated offline, extracting signal from failed
 rollouts through soft path alignment. Both supply per-step credit
-against a learned or model-generated referent. Our term differs on
-each axis: it is computed from the dataset's gold evidence
-annotations, involves no reference generator or scoring model, and
-acts on trajectory returns as a within-group ranking rather than as
-step-level credit (\S\ref{sec:method-effect}). Neither line analyzes
-when and why the terminal signal fails at the group level; that
-diagnosis (\S\ref{sec:starvation}) is what selects our term's
-placement and form. Classical shaping theory designs reward terms
-that leave the optimal policy invariant~\citep{ng1999policy}; ours is
-chosen for the opposite property---the change in within-group
-ordering is the point, and the ordering it displaces is the
-cost-driven one of \S\ref{sec:starve-cost}.
+against a learned or model-generated referent. Our term is computed
+from the dataset's gold evidence annotations and acts on trajectory
+returns as a within-group ranking rather than as step-level credit
+(\S\ref{sec:method-effect}). Neither line analyzes when and why the
+terminal signal fails at the group level (\S\ref{sec:starvation}).
+Classical shaping theory designs reward terms that leave the optimal
+policy invariant~\citep{ng1999policy}; the coverage term is designed
+to change the within-group ordering, displacing the cost-driven one of
+\S\ref{sec:starve-cost}.
 
 \paragraph{Uninformative groups in group-relative RL.} Advantage
 collapse---groups whose identical rewards yield zero
@@ -61,12 +58,11 @@ comparability and leave a fully tied group as uninformative as
 before. \citet{wang2026darkroom} shows what happens when tied groups
 are left to chance: a dense self-prediction reward occupying
 all-failure groups drives a GRPO-trained agent into a degenerate
-absorbing state. Their amplification mechanism runs through z-score
-normalization, which our leave-one-out estimator does not use; the
-qualitative lesson---whatever residual signal occupies an
-all-failure group can come to govern the policy---is the one our
-cost pathology (\S\ref{sec:starve-cost}) instantiates with ordinary
-cost terms. We take a fourth option, \emph{content}: gold evidence
+absorbing state. Their amplification runs through z-score
+normalization; our estimator is plain leave-one-out, and the lesson
+transfers: whatever residual signal occupies an all-failure group can
+come to govern the policy, which our cost pathology
+(\S\ref{sec:starve-cost}) instantiates with ordinary cost terms. We take a fourth option, \emph{content}: gold evidence
 annotations already present in multi-hop training data give tied
 groups an ordering that measures progress. Relative to the collapse
 literature, our diagnosis also adds what deep search changes: ties
