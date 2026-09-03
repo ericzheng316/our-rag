@@ -118,7 +118,17 @@ C_j\Bigr) \;=\; \beta\,\frac{K}{K-1}\bigl(C_i - \bar{C}\bigr)
 \end{equation}
 to the advantage: a common coverage offset cancels, and what remains is
 a within-group ordering by evidence progress. This term is non-zero
-exactly when coverage varies inside the group. At the SFT initialization,
+exactly when coverage varies inside the group.
+% ---- §3.4 前提条件草案(2026-09-03, 用户决议: 先以注释落档, 整段把关后再启用) ----
+% Coverage varies only where rollouts can reach gold documents under the
+% sampling policy. Training in the closed pool guarantees this: every gold
+% document is among the question's candidate paragraphs, so a rollout's
+% coverage is determined by its queries and its stopping decision rather
+% than by corpus-scale retrieval.
+% 连带(启用时一起改): §5.2 闭池句加 "which keeps every gold document
+% reachable"; §8.2 回指 \S\ref{sec:starve-fix} 的前提条件而不是从头解释。
+% ------------------------------------------------------------------------
+At the SFT initialization,
 the share of answer-tied groups whose rollouts differ in coverage rises
 from 38.9\% at two hops to 64.8\% at three and 89.3\% at four: almost
 every deep tied group carries evidence-progress differences that the
