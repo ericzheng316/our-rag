@@ -25,16 +25,23 @@ is deep, and what it cannot.
 \paragraph{Process supervision and path rewards.} Process
 supervision scores intermediate steps with a learned reward
 model~\citep{lightman2024verify,uesato2022solving}. In search RL,
-StepSearch~\citep{zheng-etal-2025-stepsearch} attaches step-wise
-rewards built from information gain and redundancy penalties, and
-Search-P1~\citep{xia2026searchp1} scores trajectory paths against
-reference plans generated offline, extracting signal from failed
-rollouts through soft path alignment. Both supply per-step credit
-against a learned or model-generated referent. Our term is computed
-from the dataset's gold evidence annotations and acts on trajectory
-returns as a within-group ranking rather than as step-level credit
-(\S\ref{sec:method-effect}). Neither line analyzes when and why the
-answer reward fails at the group level (\S\ref{sec:starvation}).
+StepSearch~\citep{zheng-etal-2025-stepsearch} treats the answer
+reward as temporally sparse and densifies it: a TF-IDF information
+gain toward the gold documents and a redundancy penalty are paid at
+the end of every search round and propagated to tokens by a learned
+critic under PPO, alongside a query reward against reference queries
+synthesized by GPT-4o. Search-P1~\citep{xia2026searchp1} scores
+trajectory paths against reference plans generated offline. Both
+assign credit to steps. Our term is a property of the whole
+trajectory---the fraction of the annotated gold set the rollout
+retrieved, credited once per document and only when the rollout
+answers---and it enters the leave-one-out advantage as a within-group
+ranking (\S\ref{sec:method-effect}). Its job is to order rollouts
+that the answer reward cannot order; that failure is measured in
+\S\ref{sec:starvation} and analyzed in neither line. StepSearch
+reports that group-relative training is unstable under its rewards
+and moves to an actor-critic estimator; we keep the group-relative
+estimator and repair what it compares.
 Classical shaping theory designs reward terms that leave the optimal
 policy invariant~\citep{ng1999policy}; the coverage term is designed
 to change the within-group ordering, displacing the cost-driven one of
