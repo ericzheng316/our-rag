@@ -80,21 +80,21 @@ Auditing the trained policy, answer-tied groups remain the majority at
 every depth ([55.2]\% at four hops, [42.6]\% uniformly wrong), and the
 informative-share expansion from coverage remains
 [$\times$2.1].\footnote{[K6-partial] Trained-policy numbers currently
-use 6 of 8 sampling channels; final numbers will use all 8.} Starvation
-is a standing property of deep search under terminal rewards, not a
-transient of initialization.
+use 6 of 8 sampling channels; final numbers will use all 8.} Answer
+ties are a standing property of deep search under terminal rewards,
+not a transient of initialization.
 
 \subsection{The mechanism, end to end}
 \label{sec:mech-chain}
 
 The audit closes the loop opened in \S\ref{sec:starvation}:
 (i)~deep-hop groups are predominantly answer-tied, and with depth their
-ties shift from benign to uniformly wrong;
+ties shift from all-right to all-wrong;
 (ii)~inside those tied groups, evidence progress still varies---at four
 hops, almost always;
 (iii)~coverage converts that variation into within-group preferences,
-expanding the share of groups that teach anything by $\times$2.4 where
-starvation is worst; and
+expanding the share of groups that provide any ordering by
+$\times$2.4 at four hops, where all-wrong ties are most common; and
 (iv)~the matched ablation (\S\ref{sec:results}) shows these preferences
 causally improve deep-hop accuracy without increasing search. Terminal
 rewards fail deep questions as a matter of arithmetic; evidence

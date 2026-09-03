@@ -51,11 +51,11 @@ How often does this happen? We sample $K{=}8$ rollouts per question at
 the training temperature from the SFT initialization on a stratified
 question set (protocol in \S\ref{sec:mechanism}).
 Table~\ref{tab:tie-ledger} shows the result: ties are the dominant
-regime, 56--71\% of groups at every depth. Depth changes the ties' \emph{character} more than their
-count. At two hops a large share of ties is benign---every rollout
-right, nothing left to teach. At four hops the benign ties all but
-vanish (4.4\%), and the starved kind dominates: 57\% of all groups are
-uniformly wrong. The deeper the question, the less the terminal reward
+regime, 56--71\% of groups at every depth. Depth changes which kind of
+tie dominates. At two hops, 28.1\% of groups are tied because every
+rollout is right. At four hops that share is 4.4\%, and 57.4\% of all
+groups are tied because every rollout is wrong. The deeper the
+question, the less the terminal reward
 can say precisely where there is the most left to learn.
 
 \begin{table}[t]
@@ -73,8 +73,7 @@ Answer-tied groups & 70.6\% & 55.9\% & 61.8\% \\
 \caption{The tie ledger: share of $K{=}8$-rollout groups in which
 terminal correctness provides no within-group ordering, measured at the
 SFT initialization on stratified MuSiQue questions ($n{=}160/320/319$
-groups per hop). With depth, ties shift from benign (all right) to
-starved (all wrong).}
+groups per hop). With depth, ties shift from all-right to all-wrong.}
 \label{tab:tie-ledger}
 \end{table}
 
@@ -137,6 +136,6 @@ training, and how the ledger evolves over it, is the subject of
 [Figure~1 placeholder: (A) ordering inside an all-failure group,
 outcome-only vs.\ coverage-augmented; (B) answer-tied group share by
 hop depth.]\vspace{2em}}}
-\caption{Answer-signal starvation and its repair. [Placeholder.]}
+\caption{Answer ties and their repair. [Placeholder.]}
 \label{fig:mechanism}
 \end{figure}
