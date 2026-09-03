@@ -1,74 +1,104 @@
 % ============================================================
-% Section 6 — Does Coverage Improve Deep Search? (draft v1, 2026-08-31)
-% 数据: HANDOFF §1/§2/§11; n_search 与逐hop配对z 本窗口 2026-08-31 复算
-%   (eval_r7s100_fulldev_20260811T142930Z vs eval_noshape_fulldev_20260816T014714Z)
-% 决议(用户 2026-08-31): 因果主张先押 run7/noshape 配对(4hop +7.2, z=3.98);
-%   显式种子配对(nsd1/2/3)落地后, 在 6.2 加 per-seed paired differences 表
-%   + Fig 2, intro 发现一的区间同步替换。已到账的 seed-1 配对留档:
-%   全量 −0.25 (z=−0.31), 4hop +4.20 (z=+1.99)。
+% Section 6 — Does Coverage Improve Deep Search? (v2, 2026-09-03)
+% 数据: 四个匹配对, 本窗口 2026-09-03 逐题复算
+%   default: eval_r7s100_fulldev_20260811T142930Z vs eval_noshape_fulldev_20260816T014714Z
+%   seed1-3: eval_sd{1,2,3}_fulldev_* vs eval_nsd{1,2,3}_fulldev_*
+%            (nsd3 = ENGINE_MAX_LEN 16384 复跑, HANDOFF §11 补)
+% 阶梯表: RL 两行改为显式种子 1-3 的均值; 前三行(闭卷/单发/零样本)仍是开卷
+%   (IRCoT 139k)口径, SFT 行是 v3 而非 RL 起点 v2.2 —— 待闭池重跑后替换 (TODO)。
+% v1 (单对) 原句以注释保留在各段之后。
 % ============================================================
 
 \section{Does Coverage Improve Deep Search?}
 \label{sec:results}
 
-\subsection{The matched comparison}
+\subsection{Matched pairs}
 \label{sec:results-pair}
 
-Table~\ref{tab:main-pair} reports the matched pair of
-\S\ref{sec:setup-comparisons} on the closed-pool MuSiQue development
-set: coverage-shaped RL against outcome-only RL from the same SFT
-initialization, the same schedule, and the same data order. Overall
-exact match improves by $+1.65$ points ($z=2.37$). The gain is
-depth-structured: nothing at two hops, $+1.6$ at three, and $+7.2$
-at four hops ($z=3.98$; 41 questions flip to correct against 12 that
-flip to wrong). Partitioning the dev set by retrieval difficulty
-instead of hop count gives the same shape: $-2.2$ on the easy third,
-$+1.8$ on the medium, $+5.3$ on the hard third ($z=2.72$). The
-improvement lands where \S\ref{sec:starvation} locates the all-wrong
-groups.
-
-The shaped policy also searches less at every depth: 4.70 versus 4.98
-calls per question overall, 6.21 versus 6.56 on 4-hop questions.
+Table~\ref{tab:main-pair} reports four matched pairs of runs on the
+closed-pool MuSiQue development set: coverage-shaped RL against
+outcome-only RL from the same SFT initialization, the same schedule,
+and the same data order (\S\ref{sec:setup-comparisons}). Three pairs
+use explicit seeds 1--3; the fourth is the default-seed pair, which
+shares the data order but not the sampler seed. Pooled over the four
+pairs, 4-hop exact match improves by $+3.6$ points (157 questions flip
+to correct against 99, $z=3.62$); pooled over the three explicit-seed
+pairs, by $+2.4$ (116:87, $z=2.04$). The per-pair 4-hop differences
+are $+7.2$, $+4.2$, $-2.7$, and $+5.7$ (Fig.~\ref{fig:paired-seeds}).
+The effect is depth-structured: pooled over the four pairs, $+0.2$ at
+two hops, $+0.6$ at three, and $+3.6$ at four. Overall EM improves by
+$+0.9$ ($z=2.36$; $+0.6$, $z=1.42$, over the explicit-seed pairs).
+Search calls per question are unchanged: the pooled difference is
+$-0.03$ overall and $-0.08$ at four hops, with per-pair differences
+between $-0.28$ and $+0.21$. The improvement lands where
+\S\ref{sec:starvation} locates the all-wrong groups.
+% 原句(v1, 2026-08-31, 单对): "Table~\ref{tab:main-pair} reports the matched
+% pair of \S\ref{sec:setup-comparisons} ... Overall exact match improves by
+% $+1.65$ points ($z=2.37$). The gain is depth-structured: nothing at two
+% hops, $+1.6$ at three, and $+7.2$ at four hops ($z=3.98$; 41 questions
+% flip to correct against 12 that flip to wrong). Partitioning the dev set
+% by retrieval difficulty instead of hop count gives the same shape: $-2.2$
+% on the easy third, $+1.8$ on the medium, $+5.3$ on the hard third
+% ($z=2.72$). ... The shaped policy also searches less at every depth: 4.70
+% versus 4.98 calls per question overall, 6.21 versus 6.56 on 4-hop
+% questions."
+% 难度三分在四对合并后不成形(E −0.7 / M +1.5 z=3.25 / H +0.1), 不再写。
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{lccrr}
+\begin{tabular}{lrrrrr}
 \toprule
-Closed pool (dev) & +Cov. & Outcome & $\Delta$ & paired $z$ \\
+Pair & \multicolumn{2}{c}{Overall EM} & \multicolumn{2}{c}{4-hop EM} & $\Delta$search \\
+ & $\Delta$ & $z$ & $\Delta$ & $z$ & \\
 \midrule
-EM overall (2{,}417) & 48.20 & 46.55 & $+1.65$ & $+2.37$ \\
-\quad 2-hop (1{,}252) & 54.47 & 54.55 & $-0.08$ & $-0.09$ \\
-\quad 3-hop (760)     & 43.42 & 41.84 & $+1.58$ & $+1.21$ \\
-\quad 4-hop (405)     & \textbf{37.78} & 30.62 & $\mathbf{+7.16}$ & $\mathbf{+3.98}$ \\
+Seed 1       & $-0.25$ & $-0.31$ & $+4.20$ & $+1.99$ & $+0.10$ \\
+Seed 2       & $+0.29$ & $+0.39$ & $-2.72$ & $-1.39$ & $+0.21$ \\
+Seed 3       & $+1.82$ & $+2.48$ & $+5.68$ & $+2.81$ & $-0.16$ \\
+Default seed & $+1.65$ & $+2.37$ & $+7.16$ & $+3.98$ & $-0.28$ \\
 \midrule
-Search calls / question & 4.70 & 4.98 & $-0.28$ & \\
-\quad 4-hop             & 6.21 & 6.56 & $-0.35$ & \\
+Pooled, seeds 1--3 & $+0.62$ & $+1.42$ & $+2.39$ & $+2.04$ & $+0.05$ \\
+Pooled, all four   & $+0.88$ & $+2.36$ & $\mathbf{+3.58}$ & $\mathbf{+3.62}$ & $-0.03$ \\
 \bottomrule
 \end{tabular}
-\caption{Coverage-shaped versus outcome-only RL: one matched pair
-(identical initialization, schedule, and data order), closed-pool
-MuSiQue dev, question-level paired McNemar $z$. The effect
-concentrates at four hops; the shaped arm makes fewer search calls per
-question.}
+\caption{Coverage-shaped minus outcome-only RL across four matched
+pairs (same SFT initialization, schedule, and data order; explicit
+seeds 1--3 also share the sampler seed), closed-pool MuSiQue dev
+(2{,}417 questions, 405 at four hops), question-level paired McNemar
+$z$; $\Delta$search is the difference in search calls per question.
+The effect concentrates at four hops.}
 \label{tab:main-pair}
 \end{table}
+% 原表(v1, 单对 run7 vs noshape): EM overall 48.20/46.55 (+1.65, z=+2.37);
+% 2-hop 54.47/54.55 (−0.08); 3-hop 43.42/41.84 (+1.58, z=+1.21);
+% 4-hop 37.78/30.62 (+7.16, z=+3.98); search 4.70/4.98, 4-hop 6.21/6.56.
 
-\subsection{Consistency across seeds}
+% ---- Fig 2 占位(fig_paired_seeds.py 待写): 每对一组柱, 4hop ΔEM 与 Δsearch ----
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.95\columnwidth}{\centering\vspace{2em}
+[Figure~2 placeholder: per-pair 4-hop $\Delta$EM and $\Delta$search
+for the four matched pairs of Table~\ref{tab:main-pair}, with the
+pooled estimate.]\vspace{2em}}}
+\caption{Per-pair deep-hop effect of coverage shaping. [Placeholder.]}
+\label{fig:paired-seeds}
+\end{figure}
+
+\subsection{Run-level variation}
 \label{sec:results-seeds}
 
-Replicating the shaped recipe under explicit seeds 1--3
-(\S\ref{sec:setup-model}) gives 47.12, 47.83, and 48.49 overall EM
-($47.8 \pm 0.7$), with 4-hop EM 34.6, 33.3, and 38.0. A separate
-batch of same-seed reruns, which fixes the data order and varies only
-training stochasticity, spans $47.5 \pm 1.6$ (Appendix~D). Extended
-training past the fixed 100-episode endpoint
-reaches 50.27 EM at episode 120 and degrades beyond it
-(Appendix~E).
-
-% TODO(nsd2/3 到账后): per-seed paired differences 表 —— 每行一个 seed,
-% 列 = 全量 Δ / 4hop Δ / 4hop z / Δsearch; seed-1 已有: −0.25 / +4.20 / +1.99;
-% 同步: intro 发现一 [+2.7 to +7.2] 区间、Fig 2 (fig_paired_seeds.py)。
+At the run level, the shaped arms of the three explicit-seed pairs
+reach 47.12, 47.83, and 48.49 overall EM ($47.8 \pm 0.7$) with 4-hop
+EM 34.6, 33.3, and 38.0 ($35.3 \pm 2.4$); the outcome-only arms reach
+47.37, 47.54, and 46.67 ($47.2 \pm 0.5$) with 4-hop EM 30.4, 36.1, and
+32.4 ($32.9 \pm 2.9$). A separate batch of same-seed reruns of the
+shaped recipe, which fixes the data order and varies only training
+stochasticity, spans $47.5 \pm 1.6$ (Appendix~D). Extended training
+past the fixed 100-episode endpoint reaches 50.27 EM at episode 120
+and degrades beyond it (Appendix~E).
+% 原句(v1): "Replicating the shaped recipe under explicit seeds 1--3
+% (\S\ref{sec:setup-model}) gives 47.12, 47.83, and 48.49 overall EM
+% ($47.8 \pm 0.7$), with 4-hop EM 34.6, 33.3, and 38.0."
 
 \subsection{The same-base ladder}
 \label{sec:results-ladder}
@@ -76,13 +106,21 @@ reaches 50.27 EM at episode 120 and degrades beyond it
 Table~\ref{tab:ladder} places the result on the ladder of the same
 base model. Closed-book answering reaches 4.8 EM; a single retrieval
 15.4; the search protocol alone, zero-shot, 29.0 with a 13.5\%
-invalid-output rate; SFT 34.5; outcome-only RL adds twelve points;
-coverage shaping adds 1.65 on top. At four hops the ladder runs
+invalid-output rate; SFT 34.5; outcome-only RL adds 12.7 points;
+coverage shaping adds 0.6 on top (means over explicit seeds 1--3). At
+four hops the ladder runs
 $1.7 \rightarrow 7.9 \rightarrow 10.1 \rightarrow 24.9 \rightarrow
-30.6 \rightarrow 37.8$: the two RL rungs contribute most of the
-deep-hop capability, and the shaping term accounts for 7.2 points of
-it.
+32.9 \rightarrow 35.3$: the two RL rungs contribute most of the
+deep-hop capability, and the shaping term accounts for 2.4 points of
+it on the seed means and 3.6 pooled over the four matched pairs.
+% 原句(v1): "... outcome-only RL adds twelve points; coverage shaping adds
+% 1.65 on top. At four hops the ladder runs 1.7 → 7.9 → 10.1 → 24.9 → 30.6
+% → 37.8 ... the shaping term accounts for 7.2 points of it."
 
+% TODO(口径, 2026-09-03 已报用户): 前三行(闭卷/单发 RAG/协议零样本)来自
+% eval_a_ladder, 其中单发与零样本是开卷(IRCoT 139k)口径; SFT 行是 SFT v3
+% (eval_sftv3_fulldev), RL 起点是 SFT v2.2(只有分层 360 评测)。闭池重跑三行后
+% 替换, 表注同步改。
 \begin{table}[t]
 \centering
 \small
@@ -94,12 +132,14 @@ Closed book              & 4.8  & 1.7  & 12.6 \\
 Single-shot RAG (top-10) & 15.4 & 7.9  & 24.9 \\
 Search protocol, zero-shot & 29.0 & 10.1 & 38.2 \\
 SFT                      & 34.5 & 24.9 & 40.7 \\
-Outcome-only RL          & 46.55 & 30.6 & 53.9 \\
-Coverage-shaped RL       & \textbf{48.20} & \textbf{37.8} & \textbf{56.6} \\
+Outcome-only RL          & 47.2 & 32.9 & 55.4 \\
+Coverage-shaped RL       & \textbf{47.8} & \textbf{35.3} & \textbf{55.9} \\
 \bottomrule
 \end{tabular}
-\caption{The same-base ladder on closed-pool MuSiQue dev. Every row
-is the same base model under progressively more training; the two RL
-rows are the matched pair of Table~\ref{tab:main-pair}.}
+\caption{The same-base ladder on MuSiQue dev. Every row is the same
+base model under progressively more training; the two RL rows are
+means over the explicit-seed runs of Table~\ref{tab:main-pair}.}
 \label{tab:ladder}
 \end{table}
+% 原表 RL 两行(v1, 单对): Outcome-only 46.55 / 30.6 / 53.9;
+% Coverage-shaped 48.20 / 37.8 / 56.6.

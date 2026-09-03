@@ -9,8 +9,8 @@
 
 Coverage shaping is trained in a closed pool, where every gold document
 is reachable by construction. What survives outside? We evaluate the
-matched pair of \S\ref{sec:setup-comparisons} (coverage-shaped versus
-outcome-only, identical schedule) zero-shot under the unified
+default-seed matched pair of Table~\ref{tab:main-pair} (coverage-shaped
+versus outcome-only, identical schedule) zero-shot under the unified
 open-corpus retrieval environment, on open-corpus MuSiQue, HotpotQA, and
 2WikiMultihopQA.
 
@@ -48,8 +48,8 @@ HotpotQA (2{,}000)     & 46.40 & 46.30 & $+0.19$ \\
 \quad 4-hop            & \textbf{33.03} & 28.51 & $\mathbf{+2.39}$ \\
 \bottomrule
 \end{tabular}
-\caption{Zero-shot open-corpus transfer of coverage shaping: one
-matched pair (identical seed lineage and schedule), question-level
+\caption{Zero-shot open-corpus transfer of coverage shaping: the
+default-seed matched pair of Table~\ref{tab:main-pair}, question-level
 paired McNemar $z$. Gains survive where evidence completeness is the
 binding skill and vanish where retrieval reachability binds.}
 \label{tab:open-paired}

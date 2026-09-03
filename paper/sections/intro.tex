@@ -83,11 +83,17 @@
   little they spent failing.
 
   Our experiments on MuSiQue with a Qwen3.5-9B policy yield three findings.
-  \textbf{First}, coverage shaping delivers consistent deep-hop gains:
-  across explicit-seed training runs, 4-hop exact match improves by
-  [+2.7 to +7.2] points over an outcome-only counterpart trained
-  identically, overall EM moves in the same direction in every run, and
-  the shaped policy makes fewer search calls per question.
+  \textbf{First}, coverage shaping improves deep-hop accuracy: pooled
+  over four matched pairs of runs, 4-hop exact match improves by $+3.6$
+  points over the outcome-only counterpart ($z=3.62$), positive in
+  three of the four pairs, with overall EM up $+0.9$ and search calls
+  per question unchanged.
+  % 原句(2026-09-03 回填前): "\textbf{First}, coverage shaping delivers
+  % consistent deep-hop gains: across explicit-seed training runs, 4-hop
+  % exact match improves by [+2.7 to +7.2] points over an outcome-only
+  % counterpart trained identically, overall EM moves in the same direction
+  % in every run, and the shaped policy makes fewer search calls per
+  % question."
   \textbf{Second}, a group-level audit locates the gain:
   at the training start, 89\% of 4-hop answer-tied groups carry coverage
   variation the terminal reward cannot see, and adding coverage expands
@@ -118,10 +124,12 @@
     coverage, deterministic and used only during training, restores
     within-group ordering where prior mitigations discard, synthesize,
     or re-baseline (\S\ref{sec:method}).
-  \item \textbf{Deep-hop gains that transfer.} Consistent 4-hop
-    improvements across explicit seeds with fewer search calls, and
-    zero-shot transfer to 2WikiMultihopQA and HotpotQA comparison
-    questions (\S\ref{sec:results}, \S\ref{sec:transfer}).
+  \item \textbf{Deep-hop gains that transfer.} 4-hop improvements over
+    matched outcome-only runs at unchanged search cost, and zero-shot
+    transfer to 2WikiMultihopQA and HotpotQA comparison questions
+    (\S\ref{sec:results}, \S\ref{sec:transfer}).
+    % 原句: "Consistent 4-hop improvements across explicit seeds with
+    % fewer search calls, and zero-shot transfer ..."
   \item \textbf{A signal-placement study.} The same evidence signal helps
     in training and offline audit but not as runtime control or injected
     observation (\S\ref{sec:placement}).
