@@ -14,10 +14,14 @@
   sequentially: each retrieval exposes an intermediate entity that the next
   query depends on. Reinforcement learning has become the standard way to
   train such search agents---the policy interleaves reasoning, search, and
-  answering over several turns, optimized with a group-relative estimator
-  such as GRPO or leave-one-out
-  REINFORCE~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}
+  answering over several turns, optimized by a critic-free policy
+  gradient whose baseline is the mean reward of the $K$ rollouts drawn
+  for the same question---group-relative advantage estimation, as in
+  GRPO and leave-one-out
+  REINFORCE~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}---
   against a terminal reward for answer
+  % 原句(2026-09-03 前): "optimized with a group-relative estimator such as
+  % GRPO or leave-one-out REINFORCE (cites) against a terminal reward"
   correctness~\citep{jin2025searchr1,chen2025research,song2025r1searcher,
   sun2026zerosearch}. This recipe improves aggregate accuracy, but its gains
   concentrate on shallow questions; on the deepest chains, where sequential
@@ -26,9 +30,12 @@
   The standard diagnosis is temporal~\citep{zheng-etal-2025-stepsearch}:
   rewards are sparse along the trajectory, so intermediate progress goes
   uncredited. We argue for a
-  different, \emph{group-level} diagnosis. A group-relative estimator learns
-  only from comparisons among the $K$ rollouts of the same question. On
-  hard questions the terminal reward routinely fails to differ: every
+  different, \emph{group-level} diagnosis. Under group-relative advantage
+  estimation, the policy gradient exists only where the $K$ rollouts of
+  the same question differ in return; identical returns cancel exactly.
+  % 原句: "A group-relative estimator learns only from comparisons among the
+  % $K$ rollouts of the same question."
+  On hard questions the terminal reward routinely fails to differ: every
   rollout is wrong, or every rollout is right. We call such a group
   \emph{answer-tied}. In deep search this is the dominant case: at the
   SFT initialization, 56--71\% of rollout groups are answer-tied at every
