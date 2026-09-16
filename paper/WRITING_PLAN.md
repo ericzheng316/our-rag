@@ -1,6 +1,6 @@
 # 写作总计划(§1 → 投稿)
 
-**题目**: Breaking Answer Ties: Evidence-Coverage Rewards for Deep Multi-Hop Search
+**题目**: Breaking Answer Ties: Query-Level Evidence Credit for Deep Multi-Hop Search(2026-09-16 改副标题;原: Evidence-Coverage Rewards for Deep Multi-Hop Search)
 **目标**: ARR 2026-10-15
 **主叙事一句话**: 深多跳搜索里大多数 rollout 组答案全错,终局奖励排不出序,
 剩下的成本项还教模型便宜地放弃;我们用 gold 证据覆盖给打平组一个有意义的排序,
@@ -9,6 +9,10 @@
 显式种子批进主表、同种子复跑批进附录。
 
 ---
+
+## 〇、2026-09-16 主方法切换(用户决议)
+
+查询级证据信用(反事实基线,HANDOFF §25)升为主方法;广播覆盖项降为对照臂。§1/§2/§4/§5/§6/§7/§8 已按此重写(旧文全部留注释),标题副标题已改。seed 2/3 结果到账后进附录,不留占位。术语纪律:只用 ML/RL 标准名词(counterfactual baseline / state-conditional baseline / turn-level credit assignment / same-state resampling),不用自造词。
 
 ## 一、逐节计划
 

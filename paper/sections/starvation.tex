@@ -99,8 +99,9 @@ all-failure groups of the $K{=}8$ audit (\S\ref{sec:mechanism})
 measures both properties: the within-group advantage ranks rollouts
 almost purely by how little they searched (mean within-group Spearman
 $\rho = -0.91$ against search count, negative in 97\% of groups) and
-bears no relation to evidence coverage ($\rho = +0.02$). The ordering
-that survives punishes persistence and ignores progress
+only weakly by evidence coverage ($\rho = +0.13$).
+% 原值(分隔符 bug 修正前): $\rho = +0.02$, 原句 "bears no relation to".
+The ordering that survives punishes persistence and ignores progress
 (Fig.~\ref{fig:mechanism}A).\footnote{Eq.~\ref{eq:rloo} applies no
 group standard-deviation normalization; \citet{wang2026darkroom}
 analyze the $z$-scored case.}
@@ -130,11 +131,12 @@ exactly when coverage varies inside the group.
 % ------------------------------------------------------------------------
 At the SFT initialization,
 the share of answer-tied groups whose rollouts differ in coverage rises
-from 38.9\% at two hops to 64.8\% at three and 89.3\% at four: almost
+from 31.0\% at two hops to 70.4\% at three and 84.3\% at four: almost
 every deep tied group carries evidence-progress differences that the
 terminal reward cannot see. Counting a group as trainable when either
 signal discriminates, coverage expands the informative share of 4-hop
-groups from 38.2\% to 93.4\% ($\times$2.4). How this repair reshapes
+groups from 38.2\% to 88.7\% ($\times$2.3). How this repair reshapes
+% 原值(修正前): 38.9/64.8/89.3; 38.2→93.4 (×2.4)。
 training, and how the ledger evolves over it, is the subject of
 \S\ref{sec:mechanism}.
 

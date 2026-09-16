@@ -32,19 +32,31 @@ the end of every search round and propagated to tokens by a learned
 critic under PPO, alongside a query reward against reference queries
 synthesized by GPT-4o. Search-P1~\citep{xia2026searchp1} scores
 trajectory paths against reference plans generated offline. Both
-assign credit to steps. Our term is a property of the whole
-trajectory---the fraction of the annotated gold set the rollout
-retrieved, credited once per document and only when the rollout
-answers---and it enters the leave-one-out advantage as a within-group
-ranking (\S\ref{sec:method-effect}). Its job is to order rollouts
-that the answer reward cannot order; that failure is measured in
-\S\ref{sec:starvation} and analyzed in neither line. StepSearch
-reports that group-relative training is unstable under its rewards
-and moves to an actor-critic estimator; we keep the group-relative
-estimator and repair what it compares.
+assign credit to steps against an absolute referent. Our query-level
+credit is also per-step, and it is relative: the executed query is
+scored against queries the policy itself would have issued at the same
+state---a counterfactual baseline in the sense of
+\citet{foerster2018coma}, with samples drawn from the visited state as
+in the vine estimator of \citet{schulman2015trpo}---computed from the
+gold annotations and the retriever alone (\S\ref{sec:method-credit}).
+Neither line analyzes when the answer reward fails at the group level
+(\S\ref{sec:starvation}), and neither contrasts step-level with
+trajectory-level placement of the same evidence signal; that contrast
+(\S\ref{sec:mech-broadcast}) is what selects the query step.
+StepSearch reports that group-relative training is unstable under its
+rewards and moves to an actor-critic estimator; we keep the
+group-relative estimator and add a state-conditional baseline at the
+query step.
+% 原句(2026-09-03 版): "Both assign credit to steps. Our term is a property of
+% the whole trajectory---the fraction of the annotated gold set the rollout
+% retrieved, credited once per document and only when the rollout answers---and
+% it enters the leave-one-out advantage as a within-group ranking. Its job is
+% to order rollouts that the answer reward cannot order ... we keep the
+% group-relative estimator and repair what it compares."
+
 Classical shaping theory designs reward terms that leave the optimal
-policy invariant~\citep{ng1999policy}; the coverage term is designed
-to change the within-group ordering, displacing the cost-driven one of
+policy invariant~\citep{ng1999policy}; our credits are designed to
+change the within-group ordering, displacing the cost-driven one of
 \S\ref{sec:starve-cost}.
 
 \paragraph{Uninformative groups in group-relative RL.} Advantage

@@ -1,10 +1,8 @@
 % ============================================================
-% Section 1 — Introduction (v2 final, 2026-08-28)
-% 结构: split-P2 变体 + 评审修正合成(3 草稿 5 评审, 人工合成)
-% 占位数字(出数后替换, 勿提前定稿 abstract):
-%   [K8] 组打平占比 [84]/[75/71/84]% 与 [×3.0] = K=4/v3 初值, 待 K=8/v2.2 复算
-%   [PAIR] "outcome-only counterpart" 措辞待配对 noshape 种子落地后升级为
-%          paired 表述; 当前按"对固定参照的一致性"分寸书写
+% Section 1 — Introduction (v3, 2026-09-16: 主方法改为查询级证据信用)
+% v2 (2026-08-28, 广播覆盖项为主方法) 的第 4-5 段与贡献列表以注释保留在文末。
+% 数据: HANDOFF §22 (K=8 修正), §29/§30 (查询级信用 seed 1), §16/§20 (开放域三对),
+%       §31-§37 (开放续训), §33 (训练后 K=8)
 % ============================================================
 
 \section{Introduction}
@@ -20,8 +18,6 @@
   GRPO and leave-one-out
   REINFORCE~\citep{shao2024deepseekmath,ahmadian2024rloo,kool2019buy}---
   against a terminal reward for answer
-  % 原句(2026-09-03 前): "optimized with a group-relative estimator such as
-  % GRPO or leave-one-out REINFORCE (cites) against a terminal reward"
   correctness~\citep{jin2025searchr1,chen2025research,song2025r1searcher,
   sun2026zerosearch}. This recipe improves aggregate accuracy, but its gains
   concentrate on shallow questions; on the deepest chains, where sequential
@@ -33,8 +29,6 @@
   different, \emph{group-level} diagnosis. Under group-relative advantage
   estimation, the policy gradient exists only where the $K$ rollouts of
   the same question differ in return; identical returns cancel exactly.
-  % 原句: "A group-relative estimator learns only from comparisons among the
-  % $K$ rollouts of the same question."
   On hard questions the terminal reward routinely fails to differ: every
   rollout is wrong, or every rollout is right. We call such a group
   \emph{answer-tied}. In deep search this is the dominant case: at the
@@ -75,41 +69,49 @@
 
   Standard multi-hop training sets already contain the information that
   breaks these ties: gold supporting documents~\citep{trived2022musique,
-  yang2018hotpotqa}. We add to the trajectory return a
-  \emph{completion-gated, first-hit evidence-coverage} term. We compute
-  coverage as the set overlap between retrieved evidence and training
-  annotations; the signal is deterministic and used only during training.
-  A rollout is credited once for each gold document it retrieves,
-  normalized by the size of the gold set, and receives the credit only if
-  it commits to an answer. Under a
-  trajectory-level group-relative estimator the term acts on
-  whole-trajectory returns; its effect---simpler than step-level process
-  supervision~\citep{lightman2024verify,uesato2022solving}---is to
-  \emph{restore within-group ranking}. Uniformly failing rollouts become ordered by how
-  much of the required evidence they actually reached, rather than by how
-  little they spent failing.
+  yang2018hotpotqa}. Where this information enters the estimator decides
+  what the policy learns from it. Added to the trajectory return as an
+  evidence-coverage term, it reorders whole trajectories: the estimator
+  computes one advantage per rollout and broadcasts it to every turn, so
+  the search step that reached new evidence and the answer step that
+  followed receive the same sign. This placement teaches the policy
+  \emph{when to answer}---withhold until the evidence set is
+  complete---a habit that pays inside the training environment and costs
+  outside it (\S\ref{sec:mechanism}, \S\ref{sec:transfer}). We therefore
+  assign the credit at the query step. At each search turn we sample $M$
+  additional queries from the current policy at the same state, retrieve
+  for each against the same environment, and credit the executed query by
+  its gold-evidence gain relative to the mean gain of the samples: a
+  state-conditional counterfactual baseline in the sense of
+  \citet{foerster2018coma}, estimated from the policy's own action
+  distribution. The credit needs the dataset's gold annotations and the
+  retriever, nothing else, and is used only during training. Answer turns
+  receive the outcome reward alone. In an answer-tied group the credit is
+  non-zero wherever the executed query and its alternatives reach
+  different evidence, which is where the tie is broken.
 
-  Our experiments on MuSiQue with a Qwen3.5-9B policy yield three findings.
-  \textbf{First}, coverage shaping improves deep-hop accuracy: pooled
-  over four matched pairs of runs, 4-hop exact match improves by $+3.6$
-  points over the outcome-only counterpart ($z=3.62$), positive in
-  three of the four pairs, with overall EM up $+0.9$ and search calls
-  per question unchanged.
-  % 原句(2026-09-03 回填前): "\textbf{First}, coverage shaping delivers
-  % consistent deep-hop gains: across explicit-seed training runs, 4-hop
-  % exact match improves by [+2.7 to +7.2] points over an outcome-only
-  % counterpart trained identically, overall EM moves in the same direction
-  % in every run, and the shaped policy makes fewer search calls per
-  % question."
-  \textbf{Second}, a group-level audit locates the gain:
-  at the training start, 89\% of 4-hop answer-tied groups carry coverage
-  variation the terminal reward cannot see, and adding coverage expands
-  the share of 4-hop groups with informative within-group ordering from
-  38\% to 93\%---the depth at which all-wrong groups are most common.
-  \textbf{Third}, the gains transfer zero-shot: $+2.05$ EM on
-  2WikiMultihopQA ($+4.52$ at four hops) and $+4.75$ on HotpotQA
-  comparison questions, the structures that require assembling several
-  parallel evidence branches.
+  Our experiments on MuSiQue with a Qwen3.5-9B policy yield three
+  findings. \textbf{First}, query-level credit improves deep search in
+  the training environment: on the closed-pool development set it
+  reaches 51.4 exact match against 47.6 for outcome-only training and
+  47.5 for the trajectory-level coverage term from the same
+  initialization and seed ($z=4.7$ and $4.9$), with 4-hop EM 40.0
+  against 31.1 ($z=4.1$), higher final evidence coverage, and 0.6 fewer
+  search calls per question. \textbf{Second}, a group-level audit
+  locates the gain: at the training start, 84\% of 4-hop answer-tied
+  groups carry coverage variation the answer reward cannot see, adding
+  coverage expands the share of 4-hop groups with an informative
+  ordering from 38\% to 89\%, and on the trained policy the share of
+  4-hop groups in which every rollout is wrong falls from 42.9\% to
+  37.3\% ($z=2.7$). \textbf{Third}, on an open 21M-passage corpus the
+  trajectory-level term is a training-environment habit---over three
+  seed-matched pairs it loses 2.75 EM on 2WikiMultihopQA ($z=-6.4$),
+  entirely on questions answered from incomplete evidence---whereas
+  query-level credit carries no such penalty, and continued training
+  against the open retriever yields the best open-corpus results of
+  this study (28.7 EM on MuSiQue, 47.0 on 2WikiMultihopQA), the credit
+  adding $+2.7$ on 2WikiMultihopQA over the same continued training
+  without it ($z=3.7$).
   % 2026-09-02 用户决议: 安置研究(涉及自训 judge 模型)暂不进 intro 发现列表,
   % 需要时取消注释并把上文 "three findings" 改回 "four"。
   % \textbf{Fourth}, the same signal that helps as a training reward
@@ -127,17 +129,51 @@
     temporal sparsity does not capture, complementing advantage-collapse
     analyses in mathematical RLVR~\citep{yu2025dapo,he2026collapse}
     (\S\ref{sec:starvation}).
-  \item \textbf{A trajectory-ranking repair.} Completion-gated first-hit
-    coverage, deterministic and used only during training, restores
-    within-group ordering where prior mitigations discard, synthesize,
-    or re-baseline (\S\ref{sec:method}).
-  \item \textbf{Deep-hop gains that transfer.} 4-hop improvements over
-    matched outcome-only runs at unchanged search cost, and zero-shot
-    transfer to 2WikiMultihopQA and HotpotQA comparison questions
-    (\S\ref{sec:results}, \S\ref{sec:transfer}).
-    % 原句: "Consistent 4-hop improvements across explicit seeds with
-    % fewer search calls, and zero-shot transfer ..."
+  \item \textbf{Query-level evidence credit.} A turn-level credit for
+    search queries, computed against a state-conditional counterfactual
+    baseline from the policy's own samples and the dataset's gold
+    annotations, with the trajectory-level coverage term as the
+    controlled contrast that isolates where the signal must enter
+    (\S\ref{sec:method}, \S\ref{sec:mechanism}).
+  \item \textbf{Deep-hop gains, and the boundary of the training
+    environment.} $+3.8$ EM and $+8.9$ 4-hop EM over outcome-only
+    training in the closed pool; no penalty on the open corpus, where the
+    trajectory-level term loses up to 5.9 points at four hops; and the
+    best open-corpus results after continued training against the open
+    retriever (\S\ref{sec:results}, \S\ref{sec:transfer}).
   \item \textbf{A signal-placement study.} The same evidence signal helps
     in training and offline audit but not as runtime control or injected
     observation (\S\ref{sec:placement}).
   \end{itemize}
+
+% ---------------------------------------------------------------
+% v2 原文(2026-08-28 至 09-03, 广播覆盖项为主方法), 供回溯:
+% 第 4 段: "Standard multi-hop training sets already contain the information
+% that breaks these ties: gold supporting documents. We add to the trajectory
+% return a \emph{completion-gated, first-hit evidence-coverage} term. We
+% compute coverage as the set overlap between retrieved evidence and training
+% annotations; the signal is deterministic and used only during training. A
+% rollout is credited once for each gold document it retrieves, normalized
+% by the size of the gold set, and receives the credit only if it commits to
+% an answer. Under a trajectory-level group-relative estimator the term acts
+% on whole-trajectory returns; its effect---simpler than step-level process
+% supervision---is to \emph{restore within-group ranking}. Uniformly failing
+% rollouts become ordered by how much of the required evidence they actually
+% reached, rather than by how little they spent failing."
+% 发现一: "coverage shaping improves deep-hop accuracy: pooled over four
+% matched pairs of runs, 4-hop exact match improves by $+3.6$ points over the
+% outcome-only counterpart ($z=3.62$), positive in three of the four pairs,
+% with overall EM up $+0.9$ and search calls per question unchanged."
+% 发现二: "... 89\% of 4-hop answer-tied groups carry coverage variation ...
+% from 38\% to 93\% ..." (K=8 分隔符 bug 修正前的数字)
+% 发现三: "the gains transfer zero-shot: $+2.05$ EM on 2WikiMultihopQA
+% ($+4.52$ at four hops) and $+4.75$ on HotpotQA comparison questions ..."
+% (单对结论, 三对配对撤回)
+% 贡献二: "\textbf{A trajectory-ranking repair.} Completion-gated first-hit
+% coverage, deterministic and used only during training, restores
+% within-group ordering where prior mitigations discard, synthesize, or
+% re-baseline."
+% 贡献三: "\textbf{Deep-hop gains that transfer.} 4-hop improvements over
+% matched outcome-only runs at unchanged search cost, and zero-shot transfer
+% to 2WikiMultihopQA and HotpotQA comparison questions."
+% ---------------------------------------------------------------

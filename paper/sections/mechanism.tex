@@ -1,26 +1,31 @@
 % ============================================================
-% Section 7 — Why Does Coverage Help? (draft v1, 2026-08-29)
-% 数据: analysis_group_signal_v2.md(SFT K=8 完整)+ analysis_within_auc.md
-% 占位: [K6-partial] = run7 checkpoint 通道补齐后重算; Fig 1B 引 §3 图
+% Section 7 — Why Does the Credit Help? (v2, 2026-09-16)
+% 数据: HANDOFF §22 (K=8 修正终值: 分隔符 bug 修复后), §15 (RL 后账本 run7 s100),
+%       §23 (广播诊断: 命中 turn 负优势比例), §24 (同状态重采样探针),
+%       §33 (查询级信用 vs outcome-only 训练后 K=8), §20 (有据性三轴, 见 §8.1)
+% v1 (2026-08-29, 修正前数字) 原句以注释保留。
 % ============================================================
 
-\section{Why Does Coverage Help?}
+\section{Why Does the Credit Help?}
 \label{sec:mechanism}
 
-Section~\ref{sec:results} measures the effect of coverage shaping on
-deep-hop accuracy; this section audits what the term changes about the
-groups the estimator learns from.
+Section~\ref{sec:results} measures the effect of the credit on
+deep-hop accuracy; this section audits what the two placements of the
+evidence signal change about the groups and turns the estimator learns
+from.
 
 \subsection{Audit protocol}
 \label{sec:mech-protocol}
 
 We sample $K{=}8$ rollouts per question at the training temperature
 from the SFT initialization on a stratified closed-pool question set
-($n{=}160/320/319$ complete groups at 2/3/4 hops), compute each
-rollout's coverage by the reward's definition (\S\ref{sec:method}), and
-classify every group by its answer outcomes and its within-group
-coverage variation. The same audit is repeated on the trained policy to
-track how the ledger evolves (\S\ref{sec:mech-evolution}).
+($n{=}160/320/319$ complete groups at 2/3/4 hops; 799 in total),
+compute each rollout's coverage by the reward's definition
+(Eq.~\ref{eq:coverage}), and classify every group by its answer
+outcomes and its within-group coverage variation. The same audit is
+repeated on trained policies: the trajectory-level arm after 100
+episodes (\S\ref{sec:mech-evolution}) and the query-level and
+outcome-only arms at step 100 (\S\ref{sec:mech-broken}).
 
 \subsection{Coverage supplies ordering where outcomes are silent}
 \label{sec:mech-repair}
@@ -28,16 +33,19 @@ track how the ledger evolves (\S\ref{sec:mech-evolution}).
 Table~\ref{tab:repair} extends the tie ledger of
 Table~\ref{tab:tie-ledger} with the repair. Under outcome-only reward,
 a group is informative exactly when it is mixed: 29--44\% of groups,
-and only 38.2\% at four hops. Counting a group as informative when
-either the answer reward or coverage discriminates, the share at
-four hops rises to 93.4\%---a $\times$2.4 expansion, the largest of any
-depth. The raw material behind this is the variation documented in
+and 38.2\% at four hops. Counting a group as informative when either
+the answer reward or coverage discriminates, the share at four hops
+rises to 88.7\%---a $\times$2.32 expansion, the largest of any depth.
+The raw material behind this is the variation documented in
 \S\ref{sec:starvation}: within answer-tied groups, the share whose
-rollouts differ in coverage rises from 38.9\% (2-hop) through 64.8\% to
-89.3\% at four hops. Deep tied groups are not uniform failures; they
-are failures that differ in how much of the evidence chain they
-recovered, and coverage converts exactly that difference into
-preference.
+rollouts differ in coverage rises from 31.0\% (2-hop) through 70.4\% to
+84.3\% at four hops, and all-wrong groups with coverage variation alone
+make up 19.4/36.2/50.5\% of all groups. Deep tied groups are not
+uniform failures; they are failures that differ in how much of the
+evidence chain they recovered, and coverage converts exactly that
+difference into preference.
+% 原句(v1, 修正前): "... rises to 93.4\%---a $\times$2.4 expansion ... from
+% 38.9\% (2-hop) through 64.8\% to 89.3\% at four hops."
 
 \begin{table}[t]
 \centering
@@ -47,42 +55,126 @@ preference.
  & 2-hop & 3-hop & 4-hop \\
 \midrule
 Informative, outcome only & 29.4\% & 44.1\% & 38.2\% \\
-Informative, outcome $\cup$ coverage & 56.9\% & 80.3\% & 93.4\% \\
-\quad expansion & $\times$1.94 & $\times$1.82 & $\times$2.44 \\
-Tied groups w/ coverage variation & 38.9\% & 64.8\% & 89.3\% \\
+Informative, outcome $\cup$ coverage & 48.8\% & 80.3\% & 88.7\% \\
+\quad expansion & $\times$1.66 & $\times$1.82 & $\times$2.32 \\
+Tied groups w/ coverage variation & 31.0\% & 70.4\% & 84.3\% \\
+All-wrong groups w/ coverage variation & 19.4\% & 36.2\% & 50.5\% \\
 \bottomrule
 \end{tabular}
-\caption{The repair, at the SFT initialization ($K{=}8$): share of
-groups providing any within-group ordering, before and after adding
-coverage. The expansion is largest at four hops, where terminal
+\caption{The repair, at the SFT initialization ($K{=}8$, 799 groups):
+share of groups providing any within-group ordering, before and after
+adding coverage. The expansion is largest at four hops, where answer
 outcomes are most often uniformly wrong.}
 \label{tab:repair}
 \end{table}
+% 原表(v1): 56.9 / 80.3 / 93.4; ×1.94 / ×1.82 / ×2.44; 38.9 / 64.8 / 89.3.
 
-\subsection{Coverage measures progress, not correctness}
+\subsection{Coverage discriminates correctness and does not decay}
 \label{sec:mech-not}
 
-Coverage is a weak predictor of answer correctness. Within mixed
-groups, where the question is defined, tie-aware within-group AUC of
-coverage against correctness is 0.62/0.59/0.56 at 2/3/4 hops at the
-SFT initialization, and lower after training.\footnote{Average-rank tie
-handling; coverage values are coarse.} Reranking sampled rollouts by
-coverage at inference time yields no reliable gain
-(\S\ref{sec:placement}). What coverage measures is \emph{progress
-through the annotated evidence chain}; its effect as a training signal
-is the matched comparison of \S\ref{sec:results}. Across questions,
-coverage stratifies risk (\S\ref{sec:placement}).
+Within mixed groups, where within-group discrimination is defined,
+ranking rollouts by coverage identifies the correct ones with tie-aware
+AUC 0.713/0.734/0.657 at 2/3/4 hops at the SFT initialization, and
+0.719/0.714/0.652 after 100 episodes of trajectory-level
+training.\footnote{Average-rank tie handling; coverage values are
+coarse.} Across questions, coverage against correctness reaches AUC
+0.758/0.752/0.738. A quantity with this discriminative power, computed
+from annotations already in the training set, is the ordering the tied
+groups lack; the signal is not consumed by training. Reranking sampled
+rollouts at inference by a verifier's estimate of coverage yields no
+reliable gain (\S\ref{sec:placement}); the value of the signal is in
+training.
+% 原句(v1, 分隔符 bug 修正前, 已作废): "Coverage is a weak predictor of answer
+% correctness. ... tie-aware within-group AUC of coverage against correctness
+% is 0.62/0.59/0.56 at 2/3/4 hops at the SFT initialization, and lower after
+% training. ... What coverage measures is \emph{progress through the annotated
+% evidence chain}; its effect as a training signal is the matched comparison of
+% \S\ref{sec:results}."
 
-\subsection{Ties persist throughout training}
+\subsection{Why the trajectory-level placement changes when to answer}
+\label{sec:mech-broadcast}
+
+The trajectory-level term reorders whole trajectories and broadcasts
+one scalar to every turn. Replaying the reward over the $K{=}8$ audit,
+a search turn that reached new gold evidence receives a negative
+advantage 41.9\% of the time at the SFT initialization and 40.5\% on
+the trained policy; an answer turn taken with incomplete evidence
+receives a positive advantage 58.9\% and 45.1\% of the time; the
+correlation between a turn's advantage and the evidence it gained is
+0.04--0.25. The signal ranks trajectories but reaches no individual
+step. What the policy can learn from it is the decision the trajectory
+return does see---whether to answer---and the trajectory-level arm
+learns exactly that: in all three retrieval environments its final
+coverage equals the outcome-only arm's (81.0 vs.\ 81.2\% in the closed
+pool, 78.5 vs.\ 78.6 on the 139k corpus, 46.0 vs.\ 46.2 on wiki18),
+and the one measure on which the arms differ is the rate of correct
+answers given from partial coverage, lower for the trajectory-level
+arm in every environment ($z=-1.81$, $-2.88$, $-3.35$).
+
+The query step carries the signal the broadcast discards. Resampling
+four queries from the trained policy at a visited search state and
+retrieving for each, 35--50\% of closed-pool states yield different
+evidence across the four, the best and worst samples differ by
+0.13--0.23 of the gold set, and the executed query is worse than one of
+its own alternatives at 13--33\% of states (20--43\%, 0.07--0.13, and
+12--18\% at the SFT initialization). One hundred episodes of
+outcome-only training leave this variation in place. Under the dense
+retriever on wiki18, 10--20\% of states show a difference and the
+spread is 0.03--0.09: the policy's queries at a state tend to succeed or
+fail together, which bounds what on-policy resampling can supply
+there (\S\ref{sec:transfer-reach}).
+
+\subsection{Ties are broken on the trained policy}
+\label{sec:mech-broken}
+
+Table~\ref{tab:k8-arms} audits the query-level and outcome-only arms
+of seed 1 at step 100 with the same protocol. On the same 799
+questions, the query-level arm has fewer all-wrong groups (32.5\% vs.\
+35.5\%; at four hops 37.3\% vs.\ 42.9\%, 31 groups resolved against 13
+lost, $z=2.71$) and more all-correct groups (19.4\% vs.\ 14.9\%; at four
+hops 12.5\% vs.\ 7.8\%). Sampled accuracy is higher (pass@1 42.5 vs.\
+38.1; at four hops 36.9 vs.\ 30.2) and so is pass@8 (67.5 vs.\ 64.5; at
+four hops 62.7 vs.\ 57.1). The coverage variation inside tied groups
+and its within-group AUC are the same for both arms (4-hop groups with
+coverage variation 83.6 vs.\ 81.5\%; AUC 0.85 vs.\ 0.85): the signal
+itself does not change with training; what changes is that the
+query-level arm has used it. The ties that disappear are the
+problem ties, and the ties that appear are solved ones.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+$K{=}8$, step 100 & \multicolumn{2}{c}{All groups} & \multicolumn{2}{c}{4-hop} \\
+ & Query credit & Outcome & Query credit & Outcome \\
+\midrule
+All-wrong groups (\%)   & \textbf{32.5} & 35.5 & \textbf{37.3} & 42.9 \\
+All-correct groups (\%) & \textbf{19.4} & 14.9 & \textbf{12.5} & 7.8 \\
+pass@1                  & \textbf{42.5} & 38.1 & \textbf{36.9} & 30.2 \\
+pass@8                  & \textbf{67.5} & 64.5 & \textbf{62.7} & 57.1 \\
+\bottomrule
+\end{tabular}
+\caption{The tie ledger on the trained policies (seed 1, step 100, 799
+closed-pool questions, temperature 0.7). Groups in which every rollout
+is wrong fall and groups in which every rollout is right rise under
+query-level credit; at four hops, 31 all-wrong groups of the
+outcome-only arm are resolved against 13 that the query-level arm loses
+($z=2.71$). At the SFT initialization the shares are 50.1\% all-wrong and
+11.1\% all-correct (57.4\% and 4.4\% at four hops).}
+\label{tab:k8-arms}
+\end{table}
+
+\subsection{Ties persist under the trajectory-level term}
 \label{sec:mech-evolution}
 
-Auditing the trained policy, answer-tied groups remain the majority at
-every depth ([55.2]\% at four hops, [42.6]\% uniformly wrong), and the
+Auditing the trajectory-level arm after 100 episodes, answer-tied
+groups remain the majority at every depth (56.2/46.9/50.2\%), and the
 informative-share expansion from coverage remains
-[$\times$2.1].\footnote{[K6-partial] Trained-policy numbers currently
-use 6 of 8 sampling channels; final numbers will use all 8.} Answer
-ties are a standing property of deep search under terminal rewards,
-not a transient of initialization.
+$\times$1.61/1.69/1.87. Answer ties are a standing property of deep
+search under terminal rewards, not a transient of initialization.
+% 原句(v1): "([55.2]\% at four hops, [42.6]\% uniformly wrong), and the
+% informative-share expansion from coverage remains [$\times$2.1]" + K6-partial 脚注。
 
 \subsection{The mechanism, end to end}
 \label{sec:mech-chain}
@@ -90,12 +182,21 @@ not a transient of initialization.
 The audit closes the loop opened in \S\ref{sec:starvation}:
 (i)~deep-hop groups are predominantly answer-tied, and with depth their
 ties shift from all-right to all-wrong;
-(ii)~inside those tied groups, evidence progress still varies---at four
-hops, almost always;
-(iii)~coverage converts that variation into within-group preferences,
-expanding the share of groups that provide any ordering by
-$\times$2.4 at four hops, where all-wrong ties are most common; and
-(iv)~the matched ablation (\S\ref{sec:results}) shows these preferences
-causally improve deep-hop accuracy without increasing search. Terminal
-rewards fail deep questions as a matter of arithmetic; evidence
-coverage repairs the arithmetic where it fails.
+(ii)~inside those tied groups, evidence progress varies---at four hops,
+in 84\% of them---and coverage discriminates correctness at AUC
+0.66--0.73;
+(iii)~placed on the trajectory return, that variation becomes a
+ranking of whole trajectories, which the broadcast delivers to every
+turn alike, so the policy learns when to answer;
+(iv)~placed at the query step against the policy's own alternatives,
+it becomes a per-step credit for the query that reached the evidence;
+and (v)~on the trained policy, all-wrong groups fall by 5.6 points at
+four hops and 4-hop accuracy rises by 8.9 (\S\ref{sec:results}).
+Terminal rewards fail deep questions as a matter of arithmetic;
+evidence credit at the query step repairs the arithmetic where it
+fails.
+% 原句(v1): "(iii) coverage converts that variation into within-group
+% preferences, expanding the share of groups that provide any ordering by
+% ×2.4 at four hops ...; (iv) the matched ablation shows these preferences
+% causally improve deep-hop accuracy without increasing search. ... evidence
+% coverage repairs the arithmetic where it fails."

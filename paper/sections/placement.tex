@@ -9,8 +9,10 @@
 \section{Where Should Evidence Signals Enter the Agent?}
 \label{sec:placement}
 
-The coverage term of Eq.~\ref{eq:coverage} is one placement of a more
-general resource. Evidence supervision can enter the agent at four
+The evidence signal of Eq.~\ref{eq:coverage} enters training at the
+query step (\S\ref{sec:method-credit}) or in the trajectory return
+(\S\ref{sec:method-effect}); both are one placement of a more general
+resource. Evidence supervision can enter the agent at four
 points: as a training reward, as an offline audit of finished
 trajectories, as a runtime controller that selects among candidate
 rollouts, and as an observation written into the agent's context. We
@@ -21,8 +23,10 @@ validation in Appendix~F); on full policy rollouts it predicts answer
 correctness at AUC 0.742.
 
 \paragraph{Training reward: works.} As a reward the signal produces
-the deep-hop gains of \S\ref{sec:results} through the ranking
-mechanism of \S\ref{sec:mechanism}.
+the deep-hop gains of \S\ref{sec:results}, through the query-step
+credit of \S\ref{sec:method-credit} and, more weakly, through the
+trajectory ranking of \S\ref{sec:method-effect}
+(\S\ref{sec:mechanism}).
 
 \paragraph{Offline audit: works.} Scoring finished trajectories,
 evidence coverage supports selective
@@ -57,8 +61,11 @@ stopping-relevant information, and the verifier's conservative bias
 use.
 
 \paragraph{Reading.} The pattern follows from what the signal
-measures. Coverage quantifies evidence progress, not answer
-correctness (\S\ref{sec:mech-not}). Progress supervision pays where
+measures. Coverage separates correct from incorrect rollouts within a
+group at AUC 0.66--0.73 (\S\ref{sec:mech-not}); at inference only a
+verifier's estimate of it is available. Progress supervision pays where
+% 原句: "Coverage quantifies evidence progress, not answer correctness
+% (\S\ref{sec:mech-not})."
 it reorders learning or stratifies risk after the fact; it has no
 purchase where a single decision must be steered at inference, and
 the policy's divergence between declared plans and executed paths

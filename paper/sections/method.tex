@@ -1,84 +1,111 @@
 % ============================================================
-% Section 4 — Coverage-Augmented Trajectory Ranking (draft v1, 2026-08-28)
-% 依据: PAPER_OUTLINE_BETA §6-"4" + Non-Claims 纪律
-% 超参具体值引至附录 C(β=0.3, λ_s=0.015, token 计价 1e-3, KL 0.02/0.5)
+% Section 4 — Query-Level Evidence Credit (v2, 2026-09-16)
+% 主方法 = 查询级信用 (HANDOFF §25); 广播覆盖项降为对照臂 (4.4)。
+% 超参: M=3, β_q=1.0, 查询封顶 16 词; 对照臂 β=0.3; λ_s=0.015, token 计价 1e-3, KL 0.02/0.5 → 附录 C
+% v1 (2026-08-28 至 09-03, 广播覆盖项为主方法) 原文以注释保留在文末。
 % ============================================================
 
-\section{Coverage-Augmented Trajectory Ranking}
+\section{Query-Level Evidence Credit}
 \label{sec:method}
 
-\subsection{Reward definition}
+\subsection{Trajectory return}
 \label{sec:method-reward}
 
 Each rollout $\tau$ receives a scalar trajectory return
 \begin{equation}
-\begin{split}
-R(\tau) \;=\;{}& R_{\mathrm{ans}}(\tau)
-\;+\; \mathbf{1}\!\left[\mathrm{ans}(\tau)\right]\, \beta\, C(\tau) \\
-&\;-\; \lambda_{s}\, N_{\mathrm{search}}(\tau)
+R(\tau) \;=\; R_{\mathrm{ans}}(\tau)
+\;-\; \lambda_{s}\, N_{\mathrm{search}}(\tau)
 \;-\; P_{\mathrm{aux}}(\tau),
-\end{split}
 \label{eq:reward}
 \end{equation}
 where $R_{\mathrm{ans}}$ is the terminal answer reward (alias-aware exact
 match against the gold answer set), $N_{\mathrm{search}}$ counts search
 calls, and $P_{\mathrm{aux}}$ collects format, turn-limit, and free-token
 penalties; \emph{free tokens} are the tokens a rollout emits outside
-protocol actions (plan lines, search queries, answers). The new term is
-the \emph{evidence-coverage} fraction
+protocol actions (plan lines, search queries, answers). The estimator
+computes one leave-one-out advantage $A_i$ per rollout from this return
+(Eq.~\ref{eq:rloo}) and broadcasts it to the tokens of every turn of
+$\tau_i$.
+
+\subsection{Evidence gain of a query}
+\label{sec:method-gain}
+
+Let $\mathcal{G}$ be the question's annotated set of gold supporting
+documents, matched by document title, and let $D_t$ be the documents
+retrieved by the query $q_t$ issued at search turn $t$. The
+\emph{evidence gain} of $q_t$ is the share of $\mathcal{G}$ that the
+rollout reaches for the first time at turn $t$:
 \begin{equation}
-C(\tau) \;=\; \frac{\bigl|\{\, d \in \mathcal{G} :
+g(q_t) \;=\; \frac{\bigl|\,(D_t \cap \mathcal{G}) \setminus
+\textstyle\bigcup_{t'<t} D_{t'}\,\bigr|}{|\mathcal{G}|}.
+\label{eq:gain}
+\end{equation}
+Each gold document is credited once, at its first retrieval;
+re-retrieving it earns nothing. The \emph{coverage} of a rollout,
+\begin{equation}
+C(\tau) \;=\; \sum_t g(q_t) \;=\; \frac{\bigl|\{\, d \in \mathcal{G} :
 \tau \text{ retrieves } d \,\}\bigr|}{|\mathcal{G}|},
 \label{eq:coverage}
 \end{equation}
-where $\mathcal{G}$ is the question's annotated set of gold supporting
-documents, matched by document title. Each gold document is credited at
-most once, at its first retrieval (\emph{first-hit}); re-retrieving an
-already-credited document earns nothing.
-% 原句(2026-09-02 清扫前): "... re-retrieving an already-credited document
-% earns nothing, so the term rewards evidence \emph{progress}, not retrieval
-% volume."
+is the fraction of $\mathcal{G}$ it reaches over the whole trajectory.
 
-\textbf{Completion gating}: the coverage credit is paid only if the
-rollout commits to an answer. Without the gate, an abstaining rollout
-collects coverage credit; in ungated runs, abstention rates rose with
-coverage reward. \textbf{Determinism}: we compute coverage as the set
-overlap between retrieved evidence and the training annotations; the
-signal is deterministic and used only during training.
-% 原句(清扫前): "Two design choices matter. \textbf{Completion gating}: the
-% coverage credit is paid only if the rollout commits to an answer. Without
-% the gate, a policy can farm evidence credit while abstaining---in early
-% ungated runs we observed abstention rates rising alongside coverage
-% reward, the expected signature of this arbitrage. Gating ties the process
-% credit to the behavior the task actually demands. \textbf{Determinism}:
-% coverage is a set intersection against training annotations. There is no
-% learned scorer, no reference plan to align against, and no model in the
-% reward loop; the same trajectory always receives the same credit, and
-% nothing about the mechanism is needed at test time."
+\subsection{Query-level credit}
+\label{sec:method-credit}
 
-\subsection{The term is a trajectory-ranking signal}
+At each search turn $t$ of rollout $\tau_i$, let $s_t$ be the state---the
+context preceding the query. We sample $M$ additional queries
+$q'_1,\ldots,q'_M \sim \pi_\theta(\cdot \mid s_t)$, retrieve for each
+against the same environment, and compute their evidence gains under
+Eq.~\ref{eq:gain} with the same prior-hit set. The credit of the
+executed query is
+\begin{equation}
+c_{i,t} \;=\; \beta_q \Bigl( g(q_t) - \frac{1}{M}\sum_{m=1}^{M}
+g(q'_m) \Bigr).
+\label{eq:credit}
+\end{equation}
+The sampled queries serve only as a baseline: they are not appended to
+the trajectory, receive no gradient, and are discarded after retrieval.
+The credit is added to the advantage of the tokens of turn $t$,
+\begin{equation}
+A_{i,t} \;=\; A_i + c_{i,t},
+\label{eq:turn-adv}
+\end{equation}
+and answer turns keep $A_i$. The bracket in Eq.~\ref{eq:credit} is a
+Monte-Carlo estimate of the advantage of $q_t$ over the policy's own
+action distribution at $s_t$: the counterfactual baseline of
+\citet{foerster2018coma} applied to the query action, with samples drawn
+from the visited state as in the vine estimator of
+\citet{schulman2015trpo}. It is computed from the gold annotations and
+the retriever; no value function is involved. Retrieval uses the first
+16 words of a query; tokens beyond the cap do not reach the retriever,
+so a query cannot raise its credit by appending terms. We use $M=3$ and
+$\beta_q=1$ (Appendix~C).
+
+In an answer-tied group, $A_i$ carries only the cost terms of
+Eq.~\ref{eq:cost-ordering}. The credit $c_{i,t}$ is non-zero wherever
+the executed query and the policy's alternatives at the same state
+reach different shares of $\mathcal{G}$, which holds at 35--50\% of the
+search states of the trained policy in the closed pool
+(\S\ref{sec:mech-broadcast}). The tie is broken at the query step; the
+answer step is left to the outcome reward.
+
+\subsection{Trajectory-level coverage: the contrast arm}
 \label{sec:method-effect}
 
-Coverage credit is emitted incrementally, at the turn where each first
-hit occurs. With discounting near one, its trajectory sum equals
-$\beta\,C(\tau)$ up to negligible correction, and the estimator computes
-a single leave-one-out advantage per trajectory
-(\S\ref{sec:starvation})---so the term acts on \emph{trajectory returns
-and their within-group ranking}. Step-level process
-supervision~\citep{lightman2024verify,uesato2022solving} assigns credit
-per step; this term assigns credit per trajectory. Following the
-% 原句(清扫前): "The operative effect of the term is therefore on
-% \emph{trajectory returns and their within-group ranking}, not on
-% step-level credit assignment: we make no claim that individual turns are
-% separately credited, and we do not use a process reward
-% model~\citep{lightman2024verify,uesato2022solving}."
-decomposition in \S\ref{sec:starvation}, the term's contribution to the
-relative advantage of rollout $i$ is
-$\beta\,\tfrac{K}{K-1}\bigl(C_i - \bar{C}\bigr)$: a common coverage
-offset cancels, and what remains is a within-group ordering by
-coverage. Uniformly failing rollouts are thereby ranked by how much of
-the required evidence they reached, displacing the cost-driven ordering
-of \S\ref{sec:starvation}.
+The alternative placement adds coverage to the trajectory return,
+\begin{equation}
+R^{\mathrm{cov}}(\tau) \;=\; R(\tau) \;+\;
+\mathbf{1}\!\left[\mathrm{ans}(\tau)\right]\, \beta\, C(\tau),
+\label{eq:covreward}
+\end{equation}
+gated on the rollout committing to an answer: without the gate, an
+abstaining rollout collects coverage credit, and in ungated runs
+abstention rates rose with coverage reward. Its contribution to the
+leave-one-out advantage is $\beta\,\tfrac{K}{K-1}\bigl(C_i -
+\bar{C}\bigr)$ (Eq.~\ref{eq:cov-advantage}): a within-group ordering of
+whole trajectories by coverage, broadcast to every turn. We train this
+arm with $\beta=0.3$ as the controlled contrast; \S\ref{sec:mech-broadcast}
+measures what the broadcast does at the level of turns.
 
 \subsection{Stabilizing long-horizon optimization}
 \label{sec:method-kl}
@@ -97,21 +124,9 @@ Replacing the reference policy with a mid-training checkpoint that has
 a high free-token rate re-ignites inflation within seven episodes (mean
 free tokens per turn $0.7 \rightarrow 7.2$); an otherwise-identical run
 that keeps the SFT reference policy does not.
-% 原句(2026-09-03 M2/M3 前): "Trajectories mix two token populations:
-% protocol actions (plan lines, search queries, answers) and free-form
-% reasoning text. We regularize the two channels separately: a weak KL
-% coefficient on action tokens and a strong KL coefficient on free-form
-% tokens, anchored to the SFT reference policy, which rarely emits
-% free-form reasoning. ... Re-anchoring the reference from the SFT policy
-% to a mid-training checkpoint that reasons freely re-ignited inflation
-% within seven episodes (mean free-form tokens 0.7 -> 7.2), while an
-% otherwise-identical run that kept the SFT anchor trained without
-% incident."
 
 % ---- KL 图(用户 2026-09-03: 先放占位符) ----
 % 成图: paper_assets/fig_ftk_forensics.{pdf,png}(生成器 fig_ftk_forensics.py)
-% 每轮 free tokens(对数轴)随训练集数: no intervention / token cost /
-% full grad-mask / asym grad-mask / replaced reference / two-tier KL(ours)
 % 入稿前: 图例 "two-tier KL anchor (ours)"、"re-anchored ref" 改成 reference
 % 措辞; 然后把下面的 \fbox 占位换成
 % \includegraphics[width=\columnwidth]{../paper_assets/fig_ftk_forensics.pdf}
@@ -135,15 +150,48 @@ Each training step proceeds as follows.
 \begin{enumerate}\setlength\itemsep{1pt}
 \item Sample $K$ rollouts per question from the current policy under the
   search protocol.
-\item Parse actions; execute searches against the environment; track
-  first-time gold-title hits per rollout.
-\item Compute trajectory returns by Eq.~\ref{eq:reward}, applying the
-  completion gate and cost terms.
-\item Compute leave-one-out advantages within each question group and
-  broadcast each trajectory's advantage to its tokens.
+\item Parse actions and execute searches against the environment. At
+  each search turn, sample $M$ queries from the same state, retrieve
+  for each, and record first-time gold-title hits for the executed query
+  and for each sample.
+\item Compute trajectory returns by Eq.~\ref{eq:reward} and query
+  credits by Eq.~\ref{eq:credit}.
+\item Compute leave-one-out advantages within each question group,
+  broadcast each trajectory's advantage to its tokens, and add the
+  credit of each search turn to that turn's tokens (Eq.~\ref{eq:turn-adv}).
 \item Apply the policy-gradient update with channel-specific KL
   regularization; a small auxiliary value head serves as a variance
   monitor (Appendix~C).
 \end{enumerate}
 Hyperparameters, infrastructure, and guard criteria are given in
 Appendix~C.
+
+% ---------------------------------------------------------------
+% v1 原文(广播覆盖项为主方法), 供回溯:
+% \section{Coverage-Augmented Trajectory Ranking}
+% 4.1 Reward definition: R(τ) = R_ans + 1[ans(τ)] β C(τ) − λ_s N_search − P_aux;
+%   "Each gold document is credited at most once, at its first retrieval
+%   (\emph{first-hit}); re-retrieving an already-credited document earns
+%   nothing." "\textbf{Completion gating}: the coverage credit is paid only if
+%   the rollout commits to an answer. Without the gate, an abstaining rollout
+%   collects coverage credit; in ungated runs, abstention rates rose with
+%   coverage reward. \textbf{Determinism}: we compute coverage as the set
+%   overlap between retrieved evidence and the training annotations; the
+%   signal is deterministic and used only during training."
+% 4.2 The term is a trajectory-ranking signal: "Coverage credit is emitted
+%   incrementally, at the turn where each first hit occurs. With discounting
+%   near one, its trajectory sum equals β C(τ) up to negligible correction, and
+%   the estimator computes a single leave-one-out advantage per trajectory---so
+%   the term acts on \emph{trajectory returns and their within-group ranking}.
+%   Step-level process supervision assigns credit per step; this term assigns
+%   credit per trajectory. ... what remains is a within-group ordering by
+%   coverage. Uniformly failing rollouts are thereby ranked by how much of the
+%   required evidence they reached, displacing the cost-driven ordering of §3."
+% 更早原句(清扫前): "so the term rewards evidence \emph{progress}, not
+%   retrieval volume." / "Two design choices matter. ... the expected signature
+%   of this arbitrage. Gating ties the process credit to the behavior the task
+%   actually demands." / "There is no learned scorer, no reference plan to align
+%   against, and no model in the reward loop; ... nothing about the mechanism
+%   is needed at test time." / "we make no claim that individual turns are
+%   separately credited, and we do not use a process reward model."
+% ---------------------------------------------------------------

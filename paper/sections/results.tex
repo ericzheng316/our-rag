@@ -1,48 +1,94 @@
 % ============================================================
-% Section 6 — Does Coverage Improve Deep Search? (v2, 2026-09-03)
-% 数据: 四个匹配对, 本窗口 2026-09-03 逐题复算
-%   default: eval_r7s100_fulldev_20260811T142930Z vs eval_noshape_fulldev_20260816T014714Z
-%   seed1-3: eval_sd{1,2,3}_fulldev_* vs eval_nsd{1,2,3}_fulldev_*
-%            (nsd3 = ENGINE_MAX_LEN 16384 复跑, HANDOFF §11 补)
-% 阶梯表: RL 两行改为显式种子 1-3 的均值; 前三行(闭卷/单发/零样本)仍是开卷
-%   (IRCoT 139k)口径, SFT 行是 v3 而非 RL 起点 v2.2 —— 待闭池重跑后替换 (TODO)。
-% v1 (单对) 原句以注释保留在各段之后。
+% Section 6 — Does Query-Level Credit Improve Deep Search? (v3, 2026-09-16)
+% 数据: HANDOFF §29 (三臂 seed 1 step_100, 有据性链同会话重评, 同题配对),
+%       §26-§28 (step 20/50/80 轨迹), §14 + 本窗口复算 (轨迹级覆盖四对配对),
+%       ABLATION_TABLES §2 + supp_evals/{singleshot,a3zero,sftv22}_closed_musique (闭池阶梯)
+% v2 (2026-09-03, 广播覆盖项为主结果) 的正文以注释保留在各段之后。
 % ============================================================
 
-\section{Does Coverage Improve Deep Search?}
+\section{Does Query-Level Credit Improve Deep Search?}
 \label{sec:results}
 
-\subsection{Matched pairs}
+\subsection{Three arms in the training environment}
+\label{sec:results-main}
+
+Table~\ref{tab:main-qc} compares the three arms of seed 1 at step 100
+on the closed-pool MuSiQue development set. Query-level credit reaches
+51.43 exact match against 47.62 for outcome-only training ($+3.8$; 236
+questions flip to correct against 144, $z=4.72$) and 47.46 for the
+trajectory-level coverage term ($z=4.94$). Over the outcome-only arm
+the gain grows with depth: $+2.5$ at two hops, $+3.3$ at three, and
+$+8.9$ at four ($z=4.08$; 57:21). The arm reaches more of the gold set
+(final coverage 83.0\% versus 81.2 and 80.4; full-coverage rate 65.1\%
+versus 62.9 and 62.5) with fewer search calls (4.31 versus 4.86 and
+4.93 per question), and it answers correctly more often both when its
+evidence is complete (43.4\% of questions versus 41.0 and 41.7) and
+when it is not (7.9\% versus 6.5 and 5.6).
+
+The contrast arms of the other seeds bound the run-level noise. At step
+100, outcome-only training reaches 47.62, 47.50, and 47.62 EM over seeds
+1--3 and trajectory-level coverage 47.46, 47.46, and 48.74, so the
+query-level arm exceeds both by 3.5--3.9 points against a seed spread of
+$\pm 0.5$--$0.7$. Along training the arm leads at every evaluated
+checkpoint: 46.92 at step 20 (contrast arms 44.15 and 44.52), 51.68 at
+step 50 (48.70 and 46.63), 52.50 at step 80 (47.54 and 49.03), and
+51.43 at step 100; it searches 0.4--0.6 fewer times per question
+throughout.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccrr}
+\toprule
+Closed pool (dev) & Query credit & Outcome-only & Traj.\ coverage &
+$z$ vs.\ outcome & $z$ vs.\ traj. \\
+\midrule
+EM overall (2{,}417)   & \textbf{51.43} & 47.62 & 47.46 & $+4.72$ & $+4.94$ \\
+\quad 2-hop (1{,}252)  & \textbf{57.99} & 55.51 & 53.67 & $+2.32$ & $+4.02$ \\
+\quad 3-hop (760)      & \textbf{46.71} & 43.42 & 43.16 & $+2.25$ & $+2.40$ \\
+\quad 4-hop (405)      & \textbf{40.00} & 31.11 & 36.30 & $+4.08$ & $+1.78$ \\
+F1 overall             & \textbf{59.72} & 55.16 & 55.07 & & \\
+Final coverage (\%)    & \textbf{83.0}  & 81.2  & 80.4  & & \\
+Full-coverage rate (\%) & \textbf{65.1} & 62.9  & 62.5  & & \\
+Search calls / question & 4.31 & 4.86 & 4.93 & & \\
+\bottomrule
+\end{tabular}
+\caption{Query-level credit against outcome-only training and the
+trajectory-level coverage term: seed 1, step 100, closed-pool MuSiQue
+dev, question-level paired McNemar $z$ (query-level credit minus the
+named arm). The three arms share the SFT initialization, schedule, and
+data order.}
+\label{tab:main-qc}
+\end{table*}
+
+\subsection{Trajectory-level coverage: four matched pairs}
 \label{sec:results-pair}
 
-Table~\ref{tab:main-pair} reports four matched pairs of runs on the
-closed-pool MuSiQue development set: coverage-shaped RL against
-outcome-only RL from the same SFT initialization, the same schedule,
-and the same data order (\S\ref{sec:setup-comparisons}). Three pairs
-use explicit seeds 1--3; the fourth is the default-seed pair, which
-shares the data order but not the sampler seed. Pooled over the four
-pairs, 4-hop exact match improves by $+3.6$ points (157 questions flip
-to correct against 99, $z=3.62$); pooled over the three explicit-seed
-pairs, by $+2.4$ (116:87, $z=2.04$). The per-pair 4-hop differences
-are $+7.2$, $+4.2$, $-2.7$, and $+5.7$ (Fig.~\ref{fig:paired-seeds}).
-The effect is depth-structured: pooled over the four pairs, $+0.2$ at
-two hops, $+0.6$ at three, and $+3.6$ at four. Overall EM improves by
-$+0.9$ ($z=2.36$; $+0.6$, $z=1.42$, over the explicit-seed pairs).
-Search calls per question are unchanged: the pooled difference is
-$-0.03$ overall and $-0.08$ at four hops, with per-pair differences
-between $-0.28$ and $+0.21$. The improvement lands where
-\S\ref{sec:starvation} locates the all-wrong groups.
-% 原句(v1, 2026-08-31, 单对): "Table~\ref{tab:main-pair} reports the matched
-% pair of \S\ref{sec:setup-comparisons} ... Overall exact match improves by
-% $+1.65$ points ($z=2.37$). The gain is depth-structured: nothing at two
-% hops, $+1.6$ at three, and $+7.2$ at four hops ($z=3.98$; 41 questions
-% flip to correct against 12 that flip to wrong). Partitioning the dev set
-% by retrieval difficulty instead of hop count gives the same shape: $-2.2$
-% on the easy third, $+1.8$ on the medium, $+5.3$ on the hard third
-% ($z=2.72$). ... The shaped policy also searches less at every depth: 4.70
-% versus 4.98 calls per question overall, 6.21 versus 6.56 on 4-hop
-% questions."
-% 难度三分在四对合并后不成形(E −0.7 / M +1.5 z=3.25 / H +0.1), 不再写。
+Table~\ref{tab:main-pair} reports the trajectory-level coverage term
+against outcome-only training over four matched pairs of runs (same
+SFT initialization, schedule, data order, and rollout samples;
+explicit seeds 1--3 and the default seed). Pooled over the four pairs,
+4-hop exact match improves by $+3.6$ points (157:99, $z=3.62$); pooled
+over the three explicit-seed pairs, by $+2.4$ (116:87, $z=2.04$). The
+per-pair 4-hop differences are $+7.2$, $+4.2$, $-2.7$, and $+5.7$
+(Fig.~\ref{fig:paired-seeds}). Overall EM moves by $+0.9$ ($z=2.36$;
+$+0.6$, $z=1.42$, over the explicit-seed pairs), and search calls per
+question are unchanged. The term breaks ties at the level of whole
+trajectories and buys a deep-hop gain of this size in the training
+environment; \S\ref{sec:mech-broadcast} shows what the broadcast does
+at the level of turns, and \S\ref{sec:transfer-traj} what the habit it
+teaches costs outside the training environment.
+% 原句(v2, 6.1): "Table~\ref{tab:main-pair} reports four matched pairs of runs
+% on the closed-pool MuSiQue development set: coverage-shaped RL against
+% outcome-only RL ... The effect is depth-structured: pooled over the four
+% pairs, $+0.2$ at two hops, $+0.6$ at three, and $+3.6$ at four. ... The
+% improvement lands where \S\ref{sec:starvation} locates the all-wrong
+% groups."
+% 原句(v1, 单对): "Overall exact match improves by $+1.65$ points ($z=2.37$).
+% ... $+7.2$ at four hops ($z=3.98$; 41 questions flip to correct against 12
+% that flip to wrong). ... $-2.2$ on the easy third, $+1.8$ on the medium,
+% $+5.3$ on the hard third ($z=2.72$). ... 4.70 versus 4.98 calls per question
+% overall, 6.21 versus 6.56 on 4-hop questions."
 
 \begin{table}[t]
 \centering
@@ -61,17 +107,13 @@ Pooled, seeds 1--3 & $+0.62$ & $+1.42$ & $+2.39$ & $+2.04$ & $+0.05$ \\
 Pooled, all four   & $+0.88$ & $+2.36$ & $\mathbf{+3.58}$ & $\mathbf{+3.62}$ & $-0.03$ \\
 \bottomrule
 \end{tabular}
-\caption{Coverage-shaped minus outcome-only RL across four matched
-pairs (same SFT initialization, schedule, and data order; explicit
-seeds 1--3 also share the sampler seed), closed-pool MuSiQue dev
-(2{,}417 questions, 405 at four hops), question-level paired McNemar
-$z$; $\Delta$search is the difference in search calls per question.
-The effect concentrates at four hops.}
+\caption{Trajectory-level coverage minus outcome-only RL across four
+matched pairs (same SFT initialization, schedule, and data order;
+explicit seeds 1--3 also share the sampler seed), closed-pool MuSiQue
+dev (2{,}417 questions, 405 at four hops), question-level paired McNemar
+$z$; $\Delta$search is the difference in search calls per question.}
 \label{tab:main-pair}
 \end{table}
-% 原表(v1, 单对 run7 vs noshape): EM overall 48.20/46.55 (+1.65, z=+2.37);
-% 2-hop 54.47/54.55 (−0.08); 3-hop 43.42/41.84 (+1.58, z=+1.21);
-% 4-hop 37.78/30.62 (+7.16, z=+3.98); search 4.70/4.98, 4-hop 6.21/6.56.
 
 % ---- Fig 2 占位(fig_paired_seeds.py 待写): 每对一组柱, 4hop ΔEM 与 Δsearch ----
 \begin{figure}[t]
@@ -80,66 +122,64 @@ The effect concentrates at four hops.}
 [Figure~2 placeholder: per-pair 4-hop $\Delta$EM and $\Delta$search
 for the four matched pairs of Table~\ref{tab:main-pair}, with the
 pooled estimate.]\vspace{2em}}}
-\caption{Per-pair deep-hop effect of coverage shaping. [Placeholder.]}
+\caption{Per-pair deep-hop effect of the trajectory-level coverage
+term. [Placeholder.]}
 \label{fig:paired-seeds}
 \end{figure}
 
 \subsection{Run-level variation}
 \label{sec:results-seeds}
 
-At the run level, the shaped arms of the three explicit-seed pairs
-reach 47.12, 47.83, and 48.49 overall EM ($47.8 \pm 0.7$) with 4-hop
-EM 34.6, 33.3, and 38.0 ($35.3 \pm 2.4$); the outcome-only arms reach
-47.37, 47.54, and 46.67 ($47.2 \pm 0.5$) with 4-hop EM 30.4, 36.1, and
-32.4 ($32.9 \pm 2.9$). A separate batch of same-seed reruns of the
-shaped recipe, which fixes the data order and varies only training
-stochasticity, spans $47.5 \pm 1.6$ (Appendix~D). Extended training
-past the fixed 100-episode endpoint reaches 50.27 EM at episode 120
-and degrades beyond it (Appendix~E).
-% 原句(v1): "Replicating the shaped recipe under explicit seeds 1--3
-% (\S\ref{sec:setup-model}) gives 47.12, 47.83, and 48.49 overall EM
-% ($47.8 \pm 0.7$), with 4-hop EM 34.6, 33.3, and 38.0."
+At the run level, the trajectory-level arms of the three explicit-seed
+pairs reach 47.12, 47.83, and 48.49 overall EM ($47.8 \pm 0.7$) with
+4-hop EM 34.6, 33.3, and 38.0 ($35.3 \pm 2.4$); the outcome-only arms
+reach 47.37, 47.54, and 46.67 ($47.2 \pm 0.5$) with 4-hop EM 30.4, 36.1,
+and 32.4 ($32.9 \pm 2.9$). A separate batch of same-seed reruns of the
+trajectory-level recipe, which fixes the data order and varies only
+training stochasticity, spans $47.5 \pm 1.6$ (Appendix~D). Extended
+training of that recipe past the fixed 100-episode endpoint reaches
+50.27 EM at episode 120 and degrades beyond it (Appendix~E); the
+query-level arm passes that value at step 50.
 
 \subsection{The same-base ladder}
 \label{sec:results-ladder}
 
 Table~\ref{tab:ladder} places the result on the ladder of the same
-base model. Closed-book answering reaches 4.8 EM; a single retrieval
-15.4; the search protocol alone, zero-shot, 29.0 with a 13.5\%
-invalid-output rate; SFT 34.5; outcome-only RL adds 12.7 points;
-coverage shaping adds 0.6 on top (means over explicit seeds 1--3). At
-four hops the ladder runs
-$1.7 \rightarrow 7.9 \rightarrow 10.1 \rightarrow 24.9 \rightarrow
-32.9 \rightarrow 35.3$: the two RL rungs contribute most of the
-deep-hop capability, and the shaping term accounts for 2.4 points of
-it on the seed means and 3.6 pooled over the four matched pairs.
-% 原句(v1): "... outcome-only RL adds twelve points; coverage shaping adds
-% 1.65 on top. At four hops the ladder runs 1.7 → 7.9 → 10.1 → 24.9 → 30.6
-% → 37.8 ... the shaping term accounts for 7.2 points of it."
+base model in the closed pool. Closed-book answering reaches 4.8 EM; a
+single retrieval of the pool's top ten paragraphs 20.8; the search
+protocol alone, zero-shot, 23.8; SFT adds 12.2 points over the
+zero-shot protocol (411:116, $z=12.85$); outcome-only RL adds 11.2 over
+SFT ($z=22.0$); query-level credit adds 3.8 over outcome-only RL
+($z=4.72$). At four hops the ladder runs
+$1.7 \rightarrow 24.0 \rightarrow 13.3 \rightarrow 18.5 \rightarrow
+32.9 \rightarrow 40.0$.\footnote{Ten of the pool's twenty paragraphs
+cover half the pool whatever the query, which is why single-shot
+retrieval scores above the zero-shot protocol at four hops.}
+% 原表(v1/v2): 前三行为开卷(IRCoT 139k)口径 (4.8 / 15.4 / 29.0), SFT 行为
+% SFT v3 (34.5); RL 两行 46.55/48.20 (单对) → 47.2/47.8 (种子均值)。
+% 原句(v2): "outcome-only RL adds 12.7 points; coverage shaping adds 0.6 on top
+% ... 1.7 → 7.9 → 10.1 → 24.9 → 32.9 → 35.3 ... the shaping term accounts for
+% 2.4 points of it on the seed means and 3.6 pooled over the four matched pairs."
 
-% TODO(口径, 2026-09-03 已报用户): 前三行(闭卷/单发 RAG/协议零样本)来自
-% eval_a_ladder, 其中单发与零样本是开卷(IRCoT 139k)口径; SFT 行是 SFT v3
-% (eval_sftv3_fulldev), RL 起点是 SFT v2.2(只有分层 360 评测)。闭池重跑三行后
-% 替换, 表注同步改。
 \begin{table}[t]
 \centering
 \small
 \begin{tabular}{lccc}
 \toprule
-Same policy (Qwen3.5-9B) & EM & 4-hop & F1 \\
+Same policy (Qwen3.5-9B), closed pool & EM & 4-hop & F1 \\
 \midrule
-Closed book              & 4.8  & 1.7  & 12.6 \\
-Single-shot RAG (top-10) & 15.4 & 7.9  & 24.9 \\
-Search protocol, zero-shot & 29.0 & 10.1 & 38.2 \\
-SFT                      & 34.5 & 24.9 & 40.7 \\
-Outcome-only RL          & 47.2 & 32.9 & 55.4 \\
-Coverage-shaped RL       & \textbf{47.8} & \textbf{35.3} & \textbf{55.9} \\
+Closed book                       & 4.8  & 1.7  & 12.6 \\
+Single-shot RAG (pool top-10)     & 20.8 & 24.0 & 28.7 \\
+Search protocol, zero-shot        & 23.8 & 13.3 & 31.1 \\
+SFT                               & 36.0 & 18.5 & 43.1 \\
+Outcome-only RL (3 seeds)         & 47.2 & 32.9 & 55.4 \\
+Trajectory-level coverage (3 seeds) & 47.8 & 35.3 & 55.9 \\
+Query-level credit (seed 1)       & \textbf{51.4} & \textbf{40.0} & \textbf{59.7} \\
 \bottomrule
 \end{tabular}
-\caption{The same-base ladder on MuSiQue dev. Every row is the same
-base model under progressively more training; the two RL rows are
-means over the explicit-seed runs of Table~\ref{tab:main-pair}.}
+\caption{The same-base ladder on closed-pool MuSiQue dev. Every row is
+the same base model under progressively more training; the RL rows of
+seeds 1--3 are means, and the query-level row is the seed-1 run of
+Table~\ref{tab:main-qc}.}
 \label{tab:ladder}
 \end{table}
-% 原表 RL 两行(v1, 单对): Outcome-only 46.55 / 30.6 / 53.9;
-% Coverage-shaped 48.20 / 37.8 / 56.6.
