@@ -8,9 +8,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import numpy as np
-from style import C, OUT, plt
+from style import C, OUT, PAL, INK, plt
 
-ARMS = [("Outcome-only", C["gray"]), ("Trajectory-level coverage", C["warn"]), ("Query-level credit", C["main"])]
+ARMS = [("Outcome-only", PAL["base"]), ("Trajectory-level coverage", PAL["traj"]), ("Query-level credit", PAL["ours"])]
+INKS = {"Outcome-only": INK["base"], "Trajectory-level coverage": INK["traj"], "Query-level credit": INK["ours"]}
 hops = ["2-hop", "3-hop", "4-hop", "All"]
 em = {  # step 100
     "Outcome-only":              [55.51, 43.42, 31.11, 47.62],
@@ -31,19 +32,19 @@ for k, (name, col) in enumerate(ARMS):
     ax.bar(x + (k - 1) * w, em[name], w, color=col, label=name, zorder=3)
 for i in range(len(hops)):
     top = max(em[n][i] for n, _ in ARMS)
-    ax.text(x[i], top + 1.2, f"+{delta[i]:.1f}\n$z$={zs[i]:.1f}", ha="center", va="bottom", fontsize=7, color=C["main"])
+    ax.text(x[i], top + 1.2, f"+{delta[i]:.1f}\n$z$={zs[i]:.1f}", ha="center", va="bottom", fontsize=7, color=INK["ours"])
 ax.set_xticks(x); ax.set_xticklabels(hops); ax.set_ylabel("Exact match (closed pool, step 100)")
 ax.set_ylim(25, 68); ax.yaxis.grid(True, lw=0.4, alpha=0.5, zorder=0)
 ax.set_title("A. Accuracy by depth", loc="left")
 
 for name, col in ARMS:
-    bx.plot(steps, curve[name], "-o", color=col, ms=4, label=name)
+    bx.plot(steps, curve[name], "-o", color=col, ms=4.5, label=name, mec=INKS[name], mew=0.6)
 bx.set_xticks(steps); bx.set_xlabel("training step"); bx.set_ylabel("Exact match (closed pool, full dev)")
 bx.set_ylim(43, 54); bx.yaxis.grid(True, lw=0.4, alpha=0.5)
 bx.set_title("B. Along training", loc="left")
 offs = {"Outcome-only": 4, "Trajectory-level coverage": -4, "Query-level credit": 0}
 for name, col in ARMS:
-    bx.annotate(f"{curve[name][-1]:.1f}", (steps[-1], curve[name][-1]), xytext=(5, offs[name]), textcoords="offset points", fontsize=7, color=col, va="center")
+    bx.annotate(f"{curve[name][-1]:.1f}", (steps[-1], curve[name][-1]), xytext=(5, offs[name]), textcoords="offset points", fontsize=7, color=INKS[name], va="center")
 bx.set_xlim(15, 112)
 
 handles, labels = ax.get_legend_handles_labels()
