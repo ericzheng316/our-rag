@@ -110,7 +110,19 @@ coverage equals the outcome-only arm's (81.0 vs.\ 81.2\% in the closed
 pool, 78.5 vs.\ 78.6 on the 139k corpus, 46.0 vs.\ 46.2 on wiki18),
 and the one measure on which the arms differ is the rate of correct
 answers given from partial coverage, lower for the trajectory-level
-arm in every environment ($z=-1.81$, $-2.88$, $-3.35$).
+arm in every environment ($z=-1.81$, $-2.88$, $-3.35$). The habit
+costs outside the training environment: over the three explicit-seed
+pairs on wiki18, the trajectory-level arm loses 0.8 EM on MuSiQue
+($z=-2.47$), is flat on HotpotQA ($z=-1.29$), and loses 2.75 EM on
+2WikiMultihopQA ($z=-6.40$; 5.9 points at four hops;
+Table~\ref{tab:open-pairs}, Appendix~\ref{app:open-tables}). In the
+closed pool, where the evidence set is always completable, the habit
+is neutral to slightly positive (fewer wrong answers from full coverage
+at four hops, $z=-2.66$); on an open corpus it forfeits questions that
+partial evidence would have answered. A placement that changes when the
+policy answers but not how it searches is the wrong placement for a
+search signal; that is what moves the credit to the query step
+(\S\ref{sec:method-credit}).
 
 The query step carries the signal the broadcast discards. Resampling
 four queries from the trained policy at a visited search state and
@@ -123,7 +135,7 @@ outcome-only training leave this variation in place. Under the dense
 retriever on wiki18, 10--20\% of states show a difference and the
 spread is 0.03--0.09: the policy's queries at a state tend to succeed or
 fail together, which bounds what on-policy resampling can supply
-there (\S\ref{sec:transfer-reach}).
+there (\S\ref{sec:results-stage2}).
 
 \subsection{Ties are broken on the trained policy}
 \label{sec:mech-broken}

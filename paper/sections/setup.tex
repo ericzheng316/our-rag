@@ -63,7 +63,7 @@ HotpotQA~\citep{yang2018hotpotqa} and
 2WikiMultihopQA~\citep{ho2020constructing}.
 
 \textbf{Continued training against the open retriever}
-(\S\ref{sec:transfer-stage2}) starts from a step-100 checkpoint: the
+(\S\ref{sec:results-stage2}) starts from a step-100 checkpoint: the
 policy is initialized from that checkpoint's adapter, the reference
 policy stays the SFT policy, the optimizer is fresh, and the data order
 continues from episode 100. It trains 50 further episodes with wiki18
@@ -82,7 +82,7 @@ additionally compared over four matched pairs of runs (explicit seeds
 1--3 and the default seed). Secondary comparisons position the system:
 the zero-shot base policy, SFT-only, and external search-RL systems
 reproduced under the unified open-corpus environment
-(\S\ref{sec:results}, \S\ref{sec:transfer}).
+(\S\ref{sec:results}).
 
 \subsection{Metrics and statistics}
 \label{sec:setup-metrics}

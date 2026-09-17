@@ -65,8 +65,8 @@ $+0.6$, $z=1.42$, over the explicit-seed pairs), and search calls per
 question are unchanged. The term breaks ties at the level of whole
 trajectories and buys a deep-hop gain of this size in the training
 environment; \S\ref{sec:mech-broadcast} shows what the broadcast does
-at the level of turns, and \S\ref{sec:transfer-traj} what the habit it
-teaches costs outside the training environment.
+at the level of turns and what the habit it teaches costs outside the
+training environment.
 % 原句(v2, 6.1): "Table~\ref{tab:main-pair} reports four matched pairs of runs
 % on the closed-pool MuSiQue development set: coverage-shaped RL against
 % outcome-only RL ... The effect is depth-structured: pooled over the four
@@ -148,6 +148,293 @@ the outcome-only and trajectory-level rows are means over seeds 1--3,
 the query-level row is the seed-1 run of Table~\ref{tab:main-qc}.}
 \label{tab:ladder}
 \end{table}
+
+\subsection{Zero-shot on the open corpus}
+\label{sec:results-open}
+
+Table~\ref{tab:open-qc} evaluates the three arms of seed 1 at step 100
+under dense retrieval over wiki18, on the same questions, with no
+training against that retriever. The penalty the trajectory-level term
+pays there (\S\ref{sec:mech-broadcast}) is absent from the query-level
+arm: on 2WikiMultihopQA it scores 40.45 against 37.05 ($z=+4.46$; 34.62
+vs.\ 27.15 at four hops, $z=+3.86$) and 41.25 for the outcome-only arm
+($z=-1.06$); on HotpotQA the three arms score 45.60, 45.60, and 46.50.
+On MuSiQue the 4-hop lead carries over (15.31 vs.\ 11.85 and 11.36,
+$z=+2.11$ and $+2.41$), while the overall score is 26.35 against 25.36
+and 28.01 ($z=+1.62$ and $-2.51$; the outcome-only value is the highest
+of its three seeds, whose mean is 27.15). The arm abstains far less
+(5.2\% of MuSiQue questions vs.\ 12.1 and 8.5; 38.2\% of 2Wiki 4-hop
+questions vs.\ 56.3 and 45.9) and searches less (3.36 calls per
+question vs.\ 3.78 and 3.70) at equal final coverage (45.0 vs.\ 45.5
+and 46.0). The search habit it learned---reach the same coverage in
+fewer calls---is calibrated to the lexical pool retriever, and under
+the dense retriever fewer calls reach less. The remedy is to earn the
+credit against the retriever the policy will be evaluated with
+(\S\ref{sec:results-stage2}).
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccrr}
+\toprule
+wiki18, three pairs & Traj.\ cov. & Outcome & $\Delta$ & pooled $z$ \\
+\midrule
+MuSiQue (2{,}417)  & 26.05 & 26.87 & $-0.8$ & $-2.47$ \\
+\quad 4-hop        & 11.03 & 10.95 & $+0.1$ & $+0.11$ \\
+HotpotQA (2{,}000) & 46.48 & 46.93 & $-0.5$ & $-1.29$ \\
+\quad comparison   & 65.33 & 66.58 & $-1.3$ & $-1.59$ \\
+2Wiki (2{,}000)    & 38.40 & 41.15 & $-2.8$ & $\mathbf{-6.40}$ \\
+\quad 4-hop        & 29.34 & 35.22 & $-5.9$ & $\mathbf{-5.33}$ \\
+\bottomrule
+\end{tabular}}
+\caption{Trajectory-level coverage versus outcome-only training on the
+open corpus: means over the three explicit-seed pairs (step 100, no
+open-corpus training), question-level paired McNemar $z$ pooled over
+the pairs.}
+\label{tab:open-pairs}
+\end{table}
+
+\subsection{Query-level credit on the open corpus}
+\label{sec:transfer-qc}
+
+Table~\ref{tab:open-qc} evaluates the query-level arm of seed 1 at
+step 100 on the same questions as its two contrast arms. The penalty
+of the trajectory-level term is absent: on 2WikiMultihopQA the
+query-level arm scores 40.45 against 37.05 for the trajectory-level arm
+($z=+4.46$; 34.62 vs.\ 27.15 at four hops, $z=+3.86$) and 41.25 for
+the outcome-only arm ($z=-1.06$); on HotpotQA the three arms score
+45.60, 45.60, and 46.50 ($z=0$ and $-1.40$). On MuSiQue the query-level
+arm scores 26.35 against 25.36 and 28.01 ($z=+1.62$ and $-2.51$; the
+outcome-only value is the highest of its three seeds, whose mean is
+27.15), with the 4-hop lead of the closed pool carrying over (15.31
+vs.\ 11.85 and 11.36, $z=+2.11$ and $+2.41$). The arm abstains far
+less (5.2\% of MuSiQue questions vs.\ 12.1 and 8.5; 38.2\% of 2Wiki
+4-hop questions vs.\ 56.3 and 45.9) and searches less (3.36 calls per
+question vs.\ 3.78 and 3.70) at equal final coverage (45.0 vs.\ 45.5
+and 46.0). The closed-pool lead does not transfer beyond four hops:
+the search habit the arm learned---reach the same coverage in fewer
+calls---is calibrated to the lexical pool retriever, and under the
+dense retriever fewer calls reach less.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccrr}
+\toprule
+wiki18, seed 1 & Query credit & Traj.\ cov. & Outcome & $z$ vs.\ traj. & $z$ vs.\ outcome \\
+\midrule
+MuSiQue (2{,}417)  & 26.35 & 25.36 & 28.01 & $+1.62$ & $-2.51$ \\
+\quad 4-hop        & \textbf{15.31} & 11.85 & 11.36 & $+2.11$ & $+2.41$ \\
+HotpotQA (2{,}000) & 45.60 & 45.60 & 46.50 & $0.00$ & $-1.40$ \\
+2Wiki (2{,}000)    & 40.45 & 37.05 & 41.25 & $+4.46$ & $-1.06$ \\
+\quad 4-hop        & 34.62 & 27.15 & 35.29 & $+3.86$ & $-0.33$ \\
+\bottomrule
+\end{tabular}
+\caption{The three arms of seed 1 at step 100 on the open corpus, same
+questions, question-level paired McNemar $z$ (query-level credit minus
+the named arm); no arm has trained against the open retriever.}
+\label{tab:open-qc}
+\end{table*}
+
+\subsection{Continued training against the open retriever}
+\label{sec:results-stage2}
+
+Two measurements fix what continued training has to change. Against
+wiki18, the official sub-questions with gold intermediate answers
+substituted in reach the complete gold set of 43.8/24.9/15.6\% of
+MuSiQue questions at 2/3/4 hops, and querying by the gold paragraphs'
+titles reaches it for 80.1/62.1/62.0\% (Table~\ref{tab:reach},
+Appendix~\ref{app:open-tables}): the passages are present and the index
+returns them when asked by title; the policy's natural-language queries
+do not reach them. Under that retriever the policy's own alternatives
+at a state are phrased alike (10--20\% of states show a difference,
+\S\ref{sec:mech-broadcast}), so the phrasing has to change against the
+retriever itself.
+
+Table~\ref{tab:stage2} continues training from the step-100
+checkpoints of seed 1 for 50 episodes with wiki18 retrieval in the
+loop (\S\ref{sec:setup-data}). Three arms isolate the two questions:
+the outcome-only checkpoint continued with and without query-level
+credit, and the query-level checkpoint continued with credit. All
+three reach 28.3--28.7 EM on wiki18 MuSiQue, the highest values of
+this study (the outcome-only checkpoint scores 28.01 before continuing;
+the extended-training flagship of Appendix~E 26.52; the strongest
+external system under the same retriever, ReSearch, 22.09). A control
+that continues the same checkpoint for 30 episodes in the closed pool
+instead moves the other way on every open-corpus set (MuSiQue 26.56,
+$z=-2.59$; 2Wiki 38.85, $z=-3.41$): the open-corpus gain comes from the
+environment, not from additional training. Transfer gains are larger
+than the in-task gain: from the same checkpoint, continued training with
+credit reaches 47.80 on HotpotQA and 47.00 on 2WikiMultihopQA against
+46.80 and 44.30 without it ($+1.0$, $z=1.80$; $+2.7$, 132:78,
+$z=3.73$), and $+0.4$ on MuSiQue ($z=0.61$). Continued training against
+the open retriever lowers closed-pool EM for every arm (to 44.2--46.2
+from 47.6--51.4): retrieval behaviour specializes to the retriever it
+is trained against, in both directions, which is the case for training
+against the retriever a policy will be deployed with.
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccrr}
+\toprule
+wiki18, three pairs & Traj.\ cov. & Outcome & $\Delta$ & pooled $z$ \\
+\midrule
+MuSiQue (2{,}417)  & 26.05 & 26.87 & $-0.8$ & $-2.47$ \\
+\quad 4-hop        & 11.03 & 10.95 & $+0.1$ & $+0.11$ \\
+HotpotQA (2{,}000) & 46.48 & 46.93 & $-0.5$ & $-1.29$ \\
+\quad comparison   & 65.33 & 66.58 & $-1.3$ & $-1.59$ \\
+2Wiki (2{,}000)    & 38.40 & 41.15 & $-2.8$ & $\mathbf{-6.40}$ \\
+\quad 4-hop        & 29.34 & 35.22 & $-5.9$ & $\mathbf{-5.33}$ \\
+\bottomrule
+\end{tabular}}
+\caption{Trajectory-level coverage versus outcome-only training on the
+open corpus: means over the three explicit-seed pairs (step 100, no
+open-corpus training), question-level paired McNemar $z$ pooled over
+the pairs.}
+\label{tab:open-pairs}
+\end{table}
+
+\subsection{Query-level credit on the open corpus}
+\label{sec:transfer-qc}
+
+Table~\ref{tab:open-qc} evaluates the query-level arm of seed 1 at
+step 100 on the same questions as its two contrast arms. The penalty
+of the trajectory-level term is absent: on 2WikiMultihopQA the
+query-level arm scores 40.45 against 37.05 for the trajectory-level arm
+($z=+4.46$; 34.62 vs.\ 27.15 at four hops, $z=+3.86$) and 41.25 for
+the outcome-only arm ($z=-1.06$); on HotpotQA the three arms score
+45.60, 45.60, and 46.50 ($z=0$ and $-1.40$). On MuSiQue the query-level
+arm scores 26.35 against 25.36 and 28.01 ($z=+1.62$ and $-2.51$; the
+outcome-only value is the highest of its three seeds, whose mean is
+27.15), with the 4-hop lead of the closed pool carrying over (15.31
+vs.\ 11.85 and 11.36, $z=+2.11$ and $+2.41$). The arm abstains far
+less (5.2\% of MuSiQue questions vs.\ 12.1 and 8.5; 38.2\% of 2Wiki
+4-hop questions vs.\ 56.3 and 45.9) and searches less (3.36 calls per
+question vs.\ 3.78 and 3.70) at equal final coverage (45.0 vs.\ 45.5
+and 46.0). The closed-pool lead does not transfer beyond four hops:
+the search habit the arm learned---reach the same coverage in fewer
+calls---is calibrated to the lexical pool retriever, and under the
+dense retriever fewer calls reach less.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccrr}
+\toprule
+wiki18, seed 1 & Query credit & Traj.\ cov. & Outcome & $z$ vs.\ traj. & $z$ vs.\ outcome \\
+\midrule
+MuSiQue (2{,}417)  & 26.35 & 25.36 & 28.01 & $+1.62$ & $-2.51$ \\
+\quad 4-hop        & \textbf{15.31} & 11.85 & 11.36 & $+2.11$ & $+2.41$ \\
+HotpotQA (2{,}000) & 45.60 & 45.60 & 46.50 & $0.00$ & $-1.40$ \\
+2Wiki (2{,}000)    & 40.45 & 37.05 & 41.25 & $+4.46$ & $-1.06$ \\
+\quad 4-hop        & 34.62 & 27.15 & 35.29 & $+3.86$ & $-0.33$ \\
+\bottomrule
+\end{tabular}
+\caption{The three arms of seed 1 at step 100 on the open corpus, same
+questions, question-level paired McNemar $z$ (query-level credit minus
+the named arm); no arm has trained against the open retriever.}
+\label{tab:open-qc}
+\end{table*}
+
+\subsection{Reachability: the bottleneck is query phrasing under the retriever}
+\label{sec:transfer-reach}
+
+Decompose success as
+$P(\text{correct}) = P(\text{evidence reachable}) \times
+P(\text{correct}\mid\text{reachable})$ and measure the first factor
+directly (Table~\ref{tab:reach}). Against wiki18, the question itself
+as a query reaches the complete gold set of 11.8/0.4/0.2\% of
+MuSiQue questions at 2/3/4 hops; the official sub-questions with gold
+intermediate answers substituted in, an upper bound on decomposition
+quality, reach it for 43.8/24.9/15.6\%. Querying by the gold
+paragraphs' titles reaches it for 80.1/62.1/62.0\%.\footnote{Title
+matching across corpus versions is exact, so all reachability numbers
+are lower bounds.} The paragraphs are present and the index returns
+them when asked by title; natural-language sub-queries do not reach
+them. On the 139k corpus the decomposition bound is 85.3/80.7/41.7\%
+and the title bound 98.3/97.9/93.8\%; in the closed pool both are
+100\%. The binding constraint outside the training environment is
+therefore how queries are phrased for the dense retriever, which
+training against that retriever can change---and it is why on-policy
+resampling supplies little credit there (\S\ref{sec:mech-broadcast}):
+the policy's own alternatives at a state are phrased alike.
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+Full gold set reached, MuSiQue dev & 2-hop & 3-hop & 4-hop \\
+\midrule
+wiki18, question as query          & 11.8\% & 0.4\%  & 0.2\% \\
+wiki18, decomposition oracle       & 43.8\% & 24.9\% & 15.6\% \\
+wiki18, title oracle               & 80.1\% & 62.1\% & 62.0\% \\
+139k corpus, decomposition oracle  & 85.3\% & 80.7\% & 41.7\% \\
+139k corpus, title oracle          & 98.3\% & 97.9\% & 93.8\% \\
+Closed pool                        & 100\%  & 100\%  & 100\% \\
+\bottomrule
+\end{tabular}}
+\caption{Evidence reachability at top-10 dense retrieval under three
+query regimes and three corpora. The decomposition oracle uses the
+official sub-questions with gold intermediate answers; the title oracle
+queries with the gold paragraphs' titles.}
+\label{tab:reach}
+\end{table}
+
+\subsection{Continued training against the open retriever}
+\label{sec:transfer-stage2}
+
+Table~\ref{tab:stage2} continues training from the step-100
+checkpoints of seed 1 for 50 episodes with wiki18 retrieval in the
+loop (\S\ref{sec:setup-data}). Three arms isolate the two questions:
+the outcome-only checkpoint continued with and without query-level
+credit, and the query-level checkpoint continued with credit. All
+three reach 28.3--28.7 EM on wiki18 MuSiQue, the highest values of
+this study (the outcome-only checkpoint scores 28.01 before continuing;
+the extended-training flagship of Appendix~E 26.52; the strongest
+external system under the same retriever, ReSearch, 22.09). A control
+that continues the same checkpoint for 30 episodes in the closed pool
+instead moves the other way on every open-corpus set (MuSiQue 26.56,
+$z=-2.59$; 2Wiki 38.85, $z=-3.41$): the open-corpus gain comes from the
+environment, not from additional training. Transfer gains are larger
+than the in-task gain: from the same checkpoint, continued training with
+credit reaches 47.80 on HotpotQA and 47.00 on 2WikiMultihopQA against
+46.80 and 44.30 without it ($+1.0$, $z=1.80$; $+2.7$, 132:78,
+$z=3.73$), and $+0.4$ on MuSiQue ($z=0.61$). Continued training against
+the open retriever lowers closed-pool EM for every arm (to 44.2--46.2
+from 47.6--51.4), the mirror image of \S\ref{sec:transfer-qc}:
+retrieval behaviour specializes to the retriever it is trained
+against, in both directions.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Continued on wiki18, 50 ep.\ (seed 1) & MuSiQue & HotpotQA & 2Wiki \\
+\midrule
+Start: outcome-only, step 100      & 28.01 & 46.50 & 41.25 \\
+\quad + continued, no credit       & 28.30 & 46.80 & 44.30 \\
+\quad + continued, query credit    & \textbf{28.67} & 47.80 & \textbf{47.00} \\
+Start: query credit, step 100      & 26.35 & 45.60 & 40.45 \\
+\quad + continued, query credit    & 28.55 & \textbf{48.55} & 44.45 \\
+\midrule
+Control: outcome-only, 30 ep.\ more in the closed pool & 26.56 & 45.60 & 38.85 \\
+Extended-training flagship (Appendix~E), no open training & 26.52 & 47.15 & 41.75 \\
+Strongest external system (wiki18)  & 22.09 & 45.00 & --- \\
+\bottomrule
+\end{tabular}
+\caption{Continued training against the open retriever from the
+step-100 checkpoints of seed 1 (alias EM on wiki18; HotpotQA and 2Wiki
+on the 2{,}000-question subsets of Table~\ref{tab:open-qc}). The
+external rows are ReSearch on MuSiQue and Search-R1 on HotpotQA, the
+strongest of the six reproduced systems on each.}
+\label{tab:stage2}
+\end{table*}
 
 \subsection{Comparison with external systems}
 \label{sec:results-external}
