@@ -12,8 +12,9 @@
 \subsection{Three arms in the training environment}
 \label{sec:results-main}
 
-Table~\ref{tab:main-qc} compares the three arms of seed 1 at step 100
-on the closed-pool MuSiQue development set. Query-level credit reaches
+Figure~\ref{fig:arms} compares the three arms of seed 1 at step 100
+on the closed-pool MuSiQue development set (full numbers in
+Table~\ref{tab:main-qc}, Appendix~\ref{app:main-table}). Query-level credit reaches
 51.43 exact match against 47.62 for outcome-only training ($+3.8$; 236
 questions flip to correct against 144, $z=4.72$) and 47.46 for the
 trajectory-level coverage term ($z=4.94$). Over the outcome-only arm
@@ -35,31 +36,19 @@ step 50 (48.70 and 46.63), 52.50 at step 80 (47.54 and 49.03), and
 51.43 at step 100; it searches 0.4--0.6 fewer times per question
 throughout.
 
-\begin{table*}[t]
+
+\begin{figure*}[t]
 \centering
-\small
-\begin{tabular}{lcccrr}
-\toprule
-Closed pool (dev) & Query credit & Outcome-only & Traj.\ coverage &
-$z$ vs.\ outcome & $z$ vs.\ traj. \\
-\midrule
-EM overall (2{,}417)   & \textbf{51.43} & 47.62 & 47.46 & $+4.72$ & $+4.94$ \\
-\quad 2-hop (1{,}252)  & \textbf{57.99} & 55.51 & 53.67 & $+2.32$ & $+4.02$ \\
-\quad 3-hop (760)      & \textbf{46.71} & 43.42 & 43.16 & $+2.25$ & $+2.40$ \\
-\quad 4-hop (405)      & \textbf{40.00} & 31.11 & 36.30 & $+4.08$ & $+1.78$ \\
-F1 overall             & \textbf{59.72} & 55.16 & 55.07 & & \\
-Final coverage (\%)    & \textbf{83.0}  & 81.2  & 80.4  & & \\
-Full-coverage rate (\%) & \textbf{65.1} & 62.9  & 62.5  & & \\
-Search calls / question & 4.31 & 4.86 & 4.93 & & \\
-\bottomrule
-\end{tabular}
+\includegraphics[width=\textwidth]{figs/fig_main_arms.pdf}
 \caption{Query-level credit against outcome-only training and the
-trajectory-level coverage term: seed 1, step 100, closed-pool MuSiQue
-dev, question-level paired McNemar $z$ (query-level credit minus the
-named arm). The three arms share the SFT initialization, schedule, and
-data order.}
-\label{tab:main-qc}
-\end{table*}
+trajectory-level coverage term on closed-pool MuSiQue dev (seed 1).
+(A)~Exact match by depth at step 100; annotations give query-level
+credit minus outcome-only and the question-level paired McNemar $z$.
+(B)~Full-dev exact match at steps 20, 50, 80, and 100. Per-hop values,
+F1, final coverage, and search calls are in Table~\ref{tab:main-qc}
+(Appendix~\ref{app:main-table}).}
+\label{fig:arms}
+\end{figure*}
 
 \subsection{Trajectory-level coverage: four matched pairs}
 \label{sec:results-pair}

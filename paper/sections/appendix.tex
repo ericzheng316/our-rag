@@ -1,0 +1,35 @@
+% ============================================================
+% Appendix (started 2026-09-16). A: full three-arm table moved out of §6.1
+% (user: 信息量不足以占双栏, 主文用 Fig.~\ref{fig:arms} 代替)。
+% B (KL forensics), C (hyperparameters), D (same-seed reruns), E (extended
+% training), F (verifier validation) 待写; 现有正文引用 Appendix~B/C/D/E/F 的
+% 字母暂以文字引用, 落地后改为 \ref。
+% ============================================================
+\section{Three arms in the training environment: full table}
+\label{app:main-table}
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccrr}
+\toprule
+Closed pool (dev) & Query credit & Outcome-only & Traj.\ coverage &
+$z$ vs.\ outcome & $z$ vs.\ traj. \\
+\midrule
+EM overall (2{,}417)   & \textbf{51.43} & 47.62 & 47.46 & $+4.72$ & $+4.94$ \\
+\quad 2-hop (1{,}252)  & \textbf{57.99} & 55.51 & 53.67 & $+2.32$ & $+4.02$ \\
+\quad 3-hop (760)      & \textbf{46.71} & 43.42 & 43.16 & $+2.25$ & $+2.40$ \\
+\quad 4-hop (405)      & \textbf{40.00} & 31.11 & 36.30 & $+4.08$ & $+1.78$ \\
+F1 overall             & \textbf{59.72} & 55.16 & 55.07 & & \\
+Final coverage (\%)    & \textbf{83.0}  & 81.2  & 80.4  & & \\
+Full-coverage rate (\%) & \textbf{65.1} & 62.9  & 62.5  & & \\
+Search calls / question & 4.31 & 4.86 & 4.93 & & \\
+\bottomrule
+\end{tabular}
+\caption{Query-level credit against outcome-only training and the
+trajectory-level coverage term: seed 1, step 100, closed-pool MuSiQue
+dev, question-level paired McNemar $z$ (query-level credit minus the
+named arm). The three arms share the SFT initialization, schedule, and
+data order.}
+\label{tab:main-qc}
+\end{table*}
