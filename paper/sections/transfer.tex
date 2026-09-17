@@ -46,6 +46,7 @@ evidence would have answered.
 \begin{table}[t]
 \centering
 \small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccrr}
 \toprule
 wiki18, three pairs & Traj.\ cov. & Outcome & $\Delta$ & pooled $z$ \\
@@ -57,7 +58,7 @@ HotpotQA (2{,}000) & 46.48 & 46.93 & $-0.5$ & $-1.29$ \\
 2Wiki (2{,}000)    & 38.40 & 41.15 & $-2.8$ & $\mathbf{-6.40}$ \\
 \quad 4-hop        & 29.34 & 35.22 & $-5.9$ & $\mathbf{-5.33}$ \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Trajectory-level coverage versus outcome-only training on the
 open corpus: means over the three explicit-seed pairs (step 100, no
 open-corpus training), question-level paired McNemar $z$ pooled over
@@ -87,7 +88,7 @@ the search habit the arm learned---reach the same coverage in fewer
 calls---is calibrated to the lexical pool retriever, and under the
 dense retriever fewer calls reach less.
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering
 \small
 \begin{tabular}{lcccrr}
@@ -105,7 +106,7 @@ HotpotQA (2{,}000) & 45.60 & 45.60 & 46.50 & $0.00$ & $-1.40$ \\
 questions, question-level paired McNemar $z$ (query-level credit minus
 the named arm); no arm has trained against the open retriever.}
 \label{tab:open-qc}
-\end{table}
+\end{table*}
 
 \subsection{Reachability: the bottleneck is query phrasing under the retriever}
 \label{sec:transfer-reach}
@@ -133,6 +134,7 @@ the policy's own alternatives at a state are phrased alike.
 \begin{table}[t]
 \centering
 \small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccc}
 \toprule
 Full gold set reached, MuSiQue dev & 2-hop & 3-hop & 4-hop \\
@@ -144,7 +146,7 @@ wiki18, title oracle               & 80.1\% & 62.1\% & 62.0\% \\
 139k corpus, title oracle          & 98.3\% & 97.9\% & 93.8\% \\
 Closed pool                        & 100\%  & 100\%  & 100\% \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Evidence reachability at top-10 dense retrieval under three
 query regimes and three corpora. The decomposition oracle uses the
 official sub-questions with gold intermediate answers; the title oracle
@@ -177,7 +179,7 @@ from 47.6--51.4), the mirror image of \S\ref{sec:transfer-qc}:
 retrieval behaviour specializes to the retriever it is trained
 against, in both directions.
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering
 \small
 \begin{tabular}{lccc}
@@ -201,4 +203,4 @@ on the 2{,}000-question subsets of Table~\ref{tab:open-qc}). The
 external rows are ReSearch on MuSiQue and Search-R1 on HotpotQA, the
 strongest of the six reproduced systems on each.}
 \label{tab:stage2}
-\end{table}
+\end{table*}

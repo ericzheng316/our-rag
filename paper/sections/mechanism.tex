@@ -50,6 +50,7 @@ difference into preference.
 \begin{table}[t]
 \centering
 \small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccc}
 \toprule
  & 2-hop & 3-hop & 4-hop \\
@@ -60,7 +61,7 @@ Informative, outcome $\cup$ coverage & 48.8\% & 80.3\% & 88.7\% \\
 Tied groups w/ coverage variation & 31.0\% & 70.4\% & 84.3\% \\
 All-wrong groups w/ coverage variation & 19.4\% & 36.2\% & 50.5\% \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{The repair, at the SFT initialization ($K{=}8$, 799 groups):
 share of groups providing any within-group ordering, before and after
 adding coverage. The expansion is largest at four hops, where answer
@@ -144,6 +145,7 @@ problem ties, and the ties that appear are solved ones.
 \begin{table}[t]
 \centering
 \small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lcccc}
 \toprule
 $K{=}8$, step 100 & \multicolumn{2}{c}{All groups} & \multicolumn{2}{c}{4-hop} \\
@@ -154,7 +156,7 @@ All-correct groups (\%) & \textbf{19.4} & 14.9 & \textbf{12.5} & 7.8 \\
 pass@1                  & \textbf{42.5} & 38.1 & \textbf{36.9} & 30.2 \\
 pass@8                  & \textbf{67.5} & 64.5 & \textbf{62.7} & 57.1 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{The tie ledger on the trained policies (seed 1, step 100, 799
 closed-pool questions, temperature 0.7). Groups in which every rollout
 is wrong fall and groups in which every rollout is right rise under
