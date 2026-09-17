@@ -72,9 +72,8 @@ A_{i,t} \;=\; A_i + c_{i,t},
 \end{equation}
 and answer turns keep $A_i$. The bracket in Eq.~\ref{eq:credit} is a
 Monte-Carlo estimate of the advantage of $q_t$ over the policy's own
-action distribution at $s_t$: the counterfactual baseline of
-\citet{foerster2018coma} applied to the query action, with samples drawn
-from the visited state as in the vine estimator of
+action distribution at $s_t$, with the baseline formed from samples
+drawn at the visited state as in the vine estimator of
 \citet{schulman2015trpo}. It is computed from the gold annotations and
 the retriever; no value function is involved. Retrieval uses the first
 16 words of a query; tokens beyond the cap do not reach the retriever,

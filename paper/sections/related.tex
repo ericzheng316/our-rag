@@ -35,9 +35,9 @@ trajectory paths against reference plans generated offline. Both
 assign credit to steps against an absolute referent. Our query-level
 credit is also per-step, and it is relative: the executed query is
 scored against queries the policy itself would have issued at the same
-state---a counterfactual baseline in the sense of
-\citet{foerster2018coma}, with samples drawn from the visited state as
-in the vine estimator of \citet{schulman2015trpo}---computed from the
+state---a state-conditional baseline formed from samples at the
+visited state, as in the vine estimator of
+\citet{schulman2015trpo}---computed from the
 gold annotations and the retriever alone (\S\ref{sec:method-credit}).
 Neither line analyzes when the answer reward fails at the group level
 (\S\ref{sec:starvation}), and neither contrasts step-level with

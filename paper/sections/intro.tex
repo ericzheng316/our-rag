@@ -82,9 +82,8 @@
   additional queries from the current policy at the same state, retrieve
   for each against the same environment, and credit the executed query by
   its gold-evidence gain relative to the mean gain of the samples: a
-  state-conditional counterfactual baseline in the sense of
-  \citet{foerster2018coma}, estimated from the policy's own action
-  distribution. The credit needs the dataset's gold annotations and the
+  state-conditional baseline estimated from the policy's own action
+  distribution, as in the vine estimator of \citet{schulman2015trpo}. The credit needs the dataset's gold annotations and the
   retriever, nothing else, and is used only during training. Answer turns
   receive the outcome reward alone. In an answer-tied group the credit is
   non-zero wherever the executed query and its alternatives reach
