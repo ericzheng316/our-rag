@@ -55,9 +55,13 @@ query step.
 % group-relative estimator and repair what it compares."
 
 Classical shaping theory designs reward terms that leave the optimal
-policy invariant~\citep{ng1999policy}; our credits are designed to
-change the within-group ordering, displacing the cost-driven one of
-\S\ref{sec:starve-cost}.
+policy invariant~\citep{ng1999policy}. The trajectory-level coverage
+term changes the objective; the query-level credit changes the
+advantage estimator and leaves the expected return unchanged
+(\S\ref{sec:method-estimate}), displacing the cost-driven ordering of
+\S\ref{sec:starve-cost} at the search states.
+% 原句: "our credits are designed to change the within-group ordering,
+% displacing the cost-driven one of \S\ref{sec:starve-cost}." 
 
 \paragraph{Uninformative groups in group-relative RL.} Advantage
 collapse---groups whose identical rewards yield zero

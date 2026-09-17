@@ -70,23 +70,58 @@ The credit is added to the advantage of the tokens of turn $t$,
 A_{i,t} \;=\; A_i + c_{i,t},
 \label{eq:turn-adv}
 \end{equation}
-and answer turns keep $A_i$. The bracket in Eq.~\ref{eq:credit} is a
-Monte-Carlo estimate of the advantage of $q_t$ over the policy's own
-action distribution at $s_t$, with the baseline formed from samples
-drawn at the visited state as in the vine estimator of
-\citet{schulman2015trpo}. It is computed from the gold annotations and
-the retriever; no value function is involved. Retrieval uses the first
-16 words of a query; tokens beyond the cap do not reach the retriever,
-so a query cannot raise its credit by appending terms. We use $M=3$ and
+and answer turns keep $A_i$. Retrieval uses the first 16 words of a
+query; tokens beyond the cap do not reach the retriever, so a query
+cannot raise its credit by appending terms. We use $M=3$ and
 $\beta_q=1$ (Appendix~C).
+% 原句(2026-09-16 前): "The bracket in Eq.~\ref{eq:credit} is a Monte-Carlo
+% estimate of the advantage of $q_t$ over the policy's own action distribution
+% at $s_t$, with the baseline formed from samples drawn at the visited state as
+% in the vine estimator of \citet{schulman2015trpo}. It is computed from the
+% gold annotations and the retriever; no value function is involved." /
+% "In an answer-tied group, $A_i$ carries only the cost terms ... The tie is
+% broken at the query step; the answer step is left to the outcome reward."
+% (内容移入 4.4)
 
-In an answer-tied group, $A_i$ carries only the cost terms of
-Eq.~\ref{eq:cost-ordering}. The credit $c_{i,t}$ is non-zero wherever
-the executed query and the policy's alternatives at the same state
-reach different shares of $\mathcal{G}$, which holds at 35--50\% of the
-search states of the trained policy in the closed pool
-(\S\ref{sec:mech-broadcast}). The tie is broken at the query step; the
-answer step is left to the outcome reward.
+\subsection{What the credit estimates}
+\label{sec:method-estimate}
+
+Let $r_g(s,q)=g(q)$ be the one-step evidence gain of issuing query $q$
+at state $s$, and $V^\pi_g(s)=\mathbb{E}_{q\sim\pi_\theta(\cdot\mid
+s)}[g(q)]$ its expectation under the current policy. The sample mean in
+Eq.~\ref{eq:credit} is a Monte-Carlo estimate of $V^\pi_g(s_t)$ from
+samples drawn at the visited state, as in the vine estimator of
+\citet{schulman2015trpo}, so $c_{i,t}$ estimates $\beta_q\,A^\pi_g(s_t,q_t)$
+with $A^\pi_g(s,q)=r_g(s,q)-V^\pi_g(s)$: the leave-one-out contrast of
+Eq.~\ref{eq:rloo}, applied at the search state to $M$ samples of the
+same policy instead of at the question to the $K$ rollouts. Over the
+executed query the estimate is zero-mean,
+$\mathbb{E}_{q_t\sim\pi_\theta(\cdot\mid s_t)}[c_{i,t}]=0$, so the credit
+leaves the expected return of every trajectory unchanged. Its
+contribution to the policy gradient is
+\begin{equation}
+\mathbb{E}\bigl[c_{i,t}\,\nabla_\theta\log\pi_\theta(q_t\mid s_t)\bigr]
+\;=\;\beta_q\,\nabla_\theta V^\pi_g(s_t),
+\label{eq:credit-grad}
+\end{equation}
+the gradient of the expected evidence gain at the visited state: at
+each search state the update moves probability from queries that reach
+no new gold evidence to queries that do. Summed along a rollout,
+\begin{equation}
+\sum_t c_{i,t} \;=\; \beta_q\Bigl(C(\tau_i)-\sum_t \hat V_g(s_{i,t})\Bigr),
+\label{eq:credit-sum}
+\end{equation}
+coverage relative to the policy's expected coverage along the same
+path, assigned to the turns that produced it; the trajectory-level term
+contributes $\beta\tfrac{K}{K-1}(C_i-\bar C)$, coverage relative to the
+other rollouts of the question, assigned to every turn alike. The
+credit is non-zero at a state whenever
+$\mathrm{Var}_{q\sim\pi_\theta(\cdot\mid s)}[g(q)]>0$, which holds at
+35--50\% of the search states of the trained policy in the closed pool
+(\S\ref{sec:mech-broadcast}). In an answer-tied group the trajectory
+advantage $A_i$ carries only the cost terms of
+Eq.~\ref{eq:cost-ordering}, and the credit is the signal that orders
+the query.
 
 \subsection{Trajectory-level coverage: the contrast arm}
 \label{sec:method-effect}

@@ -86,8 +86,15 @@ training.
 \label{sec:mech-broadcast}
 
 The trajectory-level term reorders whole trajectories and broadcasts
-one scalar to every turn. Replaying the reward over the $K{=}8$ audit,
-a search turn that reached new gold evidence receives a negative
+one scalar to every turn. For the action at turn $t$, the coverage
+gained before $t$ is independent of that action given $s_t$ and
+contributes only variance to its gradient; the gain after $t$ is its
+signal, carried inside the return of the whole trajectory. The
+completion gate makes the answer action the one action whose choice
+switches the entire term $\beta C(\tau)$ on or off, so the term's
+gradient concentrates on when to answer. Replaying the reward over the
+$K{=}8$ audit measures both effects: a search turn that reached new
+gold evidence receives a negative
 advantage 41.9\% of the time at the SFT initialization and 40.5\% on
 the trained policy; an answer turn taken with incomplete evidence
 receives a positive advantage 58.9\% and 45.1\% of the time; the
