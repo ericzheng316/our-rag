@@ -259,7 +259,14 @@ strongest of the six reproduced systems on each.}
 \label{sec:results-external}
 
 Table~\ref{tab:external} places the trained policies against five
-search-RL systems reproduced under one retrieval environment. On
+search-RL systems---ZeroSearch~\citep{sun2026zerosearch},
+R1-Searcher~\citep{song2025r1searcher},
+StepSearch~\citep{zheng-etal-2025-stepsearch},
+Search-R1~\citep{jin2025searchr1}, and
+ReSearch~\citep{chen2025research}---reproduced under one retrieval
+environment; the two rows of ours are the query-level arm after 50
+episodes against wiki18 (\S\ref{sec:results-stage2}) and the
+extended-training checkpoint of Appendix~E. On
 wiki18 MuSiQue, query-level credit with continued training against the
 open retriever reaches 28.55 EM against 22.09 for ReSearch, the
 strongest external system (paired $z=7.80$); on HotpotQA, 48.55 against
@@ -274,15 +281,15 @@ extended-training checkpoint reaches 45.64 against 32.77.
  & \multicolumn{2}{c}{MuSiQue (wiki18)} & HotpotQA (wiki18) & 2Wiki (wiki18) & MuSiQue (139k) \\
 System & EM & F1 & EM & EM & EM \\
 \midrule
-ZeroSearch~\citep{sun2026zerosearch}                     & 9.43  & 16.78 & 30.70 & --- & 11.92 \\
-R1-Searcher~\citep{song2025r1searcher}                   & 15.27 & 22.88 & 39.60 & --- & 24.74 \\
-StepSearch~\citep{zheng-etal-2025-stepsearch}            & 18.25 & 26.96 & 35.15 & --- & 25.49 \\
-Search-R1~\citep{jin2025searchr1}                        & 20.40 & 29.50 & 45.00 & --- & 31.73 \\
-ReSearch~\citep{chen2025research}                        & 22.09 & 32.43 & 44.05 & --- & 32.77 \\
+ZeroSearch   & 9.43  & 16.78 & 30.70 & --- & 11.92 \\
+R1-Searcher  & 15.27 & 22.88 & 39.60 & --- & 24.74 \\
+StepSearch   & 18.25 & 26.96 & 35.15 & --- & 25.49 \\
+Search-R1    & 20.40 & 29.50 & 45.00 & --- & 31.73 \\
+ReSearch     & 22.09 & 32.43 & 44.05 & --- & 32.77 \\
 \midrule
 \rowcolor{shade}
-Ours, query-level credit, + 50 episodes against wiki18   & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & \textbf{44.45} & 44.97 \\
-Ours, extended-training checkpoint (Appendix~E)          & 26.52 & 36.90 & 47.15 & 41.75 & \textbf{45.64} \\
+Ours (+50 ep.\ on wiki18) & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & \textbf{44.45} & 44.97 \\
+Ours (extended, App.~E)    & 26.52 & 36.90 & 47.15 & 41.75 & \textbf{45.64} \\
 \bottomrule
 \end{tabular}
 \caption{Comparison with search-RL systems under one retrieval

@@ -61,6 +61,29 @@ $z$; $\Delta$search is the difference in search calls per question.}
 \label{tab:main-pair}
 \end{table}
 
+% 修复账本表(2026-09-16 从 §7.2 移出, 主文改用 Fig.~\ref{fig:repair})
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+ & 2-hop & 3-hop & 4-hop \\
+\midrule
+Informative, outcome only & 29.4\% & 44.1\% & 38.2\% \\
+Informative, outcome $\cup$ coverage & 48.8\% & 80.3\% & 88.7\% \\
+\quad expansion & $\times$1.66 & $\times$1.82 & $\times$2.32 \\
+Tied groups w/ coverage variation & 31.0\% & 70.4\% & 84.3\% \\
+All-wrong groups w/ coverage variation & 19.4\% & 36.2\% & 50.5\% \\
+\bottomrule
+\end{tabular}}
+\caption{The repair, at the SFT initialization ($K{=}8$, 799 groups):
+share of groups providing any within-group ordering, before and after
+adding coverage. The expansion is largest at four hops, where answer
+outcomes are most often uniformly wrong.}
+\label{tab:repair}
+\end{table}
+
 \section{Open-corpus tables}
 \label{app:open-tables}
 

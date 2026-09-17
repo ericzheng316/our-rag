@@ -30,7 +30,7 @@ outcome-only arms at step 100 (\S\ref{sec:mech-broken}).
 \subsection{Coverage supplies ordering where outcomes are silent}
 \label{sec:mech-repair}
 
-Table~\ref{tab:repair} extends the tie ledger of
+Figure~\ref{fig:repair} extends the tie ledger of
 Table~\ref{tab:tie-ledger} with the repair. Under outcome-only reward,
 a group is informative exactly when it is mixed: 29--44\% of groups,
 and 38.2\% at four hops. Counting a group as informative when either
@@ -47,27 +47,17 @@ difference into preference.
 % 原句(v1, 修正前): "... rises to 93.4\%---a $\times$2.4 expansion ... from
 % 38.9\% (2-hop) through 64.8\% to 89.3\% at four hops."
 
-\begin{table}[t]
+\begin{figure}[t]
 \centering
-\small
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lccc}
-\toprule
- & 2-hop & 3-hop & 4-hop \\
-\midrule
-Informative, outcome only & 29.4\% & 44.1\% & 38.2\% \\
-Informative, outcome $\cup$ coverage & 48.8\% & 80.3\% & 88.7\% \\
-\quad expansion & $\times$1.66 & $\times$1.82 & $\times$2.32 \\
-Tied groups w/ coverage variation & 31.0\% & 70.4\% & 84.3\% \\
-All-wrong groups w/ coverage variation & 19.4\% & 36.2\% & 50.5\% \\
-\bottomrule
-\end{tabular}}
-\caption{The repair, at the SFT initialization ($K{=}8$, 799 groups):
-share of groups providing any within-group ordering, before and after
-adding coverage. The expansion is largest at four hops, where answer
-outcomes are most often uniformly wrong.}
-\label{tab:repair}
-\end{table}
+\includegraphics[width=\columnwidth]{figs/fig_repair.pdf}
+\caption{Share of $K{=}8$ groups that provide any within-group ordering
+at the SFT initialization (799 closed-pool groups): mixed-outcome
+groups, which the answer reward orders, plus all-wrong groups whose
+rollouts differ in coverage, which only coverage orders. The expansion
+is largest at four hops. Full ledger in Table~\ref{tab:repair}
+(Appendix~\ref{app:main-table}).}
+\label{fig:repair}
+\end{figure}
 % 原表(v1): 56.9 / 80.3 / 93.4; ×1.94 / ×1.82 / ×2.44; 38.9 / 64.8 / 89.3.
 
 \subsection{Coverage discriminates correctness and does not decay}
