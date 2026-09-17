@@ -33,3 +33,30 @@ named arm). The three arms share the SFT initialization, schedule, and
 data order.}
 \label{tab:main-qc}
 \end{table*}
+
+% 四对配对表(2026-09-16 从 §6.2 移出, 主文改用 Fig.~\ref{fig:paired-seeds})
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrr}
+\toprule
+Pair & \multicolumn{2}{c}{Overall EM} & \multicolumn{2}{c}{4-hop EM} & $\Delta$search \\
+ & $\Delta$ & $z$ & $\Delta$ & $z$ & \\
+\midrule
+Seed 1       & $-0.25$ & $-0.31$ & $+4.20$ & $+1.99$ & $+0.10$ \\
+Seed 2       & $+0.29$ & $+0.39$ & $-2.72$ & $-1.39$ & $+0.21$ \\
+Seed 3       & $+1.82$ & $+2.48$ & $+5.68$ & $+2.81$ & $-0.16$ \\
+Default seed & $+1.65$ & $+2.37$ & $+7.16$ & $+3.98$ & $-0.28$ \\
+\midrule
+Pooled, seeds 1--3 & $+0.62$ & $+1.42$ & $+2.39$ & $+2.04$ & $+0.05$ \\
+Pooled, all four   & $+0.88$ & $+2.36$ & $\mathbf{+3.58}$ & $\mathbf{+3.62}$ & $-0.03$ \\
+\bottomrule
+\end{tabular}}
+\caption{Trajectory-level coverage minus outcome-only RL across four
+matched pairs (same SFT initialization, schedule, and data order;
+explicit seeds 1--3 also share the sampler seed), closed-pool MuSiQue
+dev (2{,}417 questions, 405 at four hops), question-level paired McNemar
+$z$; $\Delta$search is the difference in search calls per question.}
+\label{tab:main-pair}
+\end{table}
