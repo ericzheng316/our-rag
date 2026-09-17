@@ -17,7 +17,7 @@ total = [48.8, 80.3, 88.7]
 expansion = [1.66, 1.82, 2.32]
 tied_var = [31.0, 70.4, 84.3]              # tied groups with coverage variation (text)
 
-fig, ax = plt.subplots(figsize=(3.3, 2.3))
+fig, ax = plt.subplots(figsize=(3.3, 2.6))
 x = np.arange(len(hops)); w = 0.55
 ax.bar(x, outcome_only, w, color=PAL["base"], edgecolor=LINE["base"], linewidth=0.5, hatch="///", label="Mixed outcomes (answer reward orders)", zorder=3)
 ax.bar(x, added, w, bottom=outcome_only, color=PAL["evidence"], edgecolor=LINE["evidence"], linewidth=0.5, label="All wrong, coverage differs (coverage orders)", zorder=3)
@@ -26,9 +26,10 @@ for xi, o, t, e in zip(x, outcome_only, total, expansion):
     ax.text(xi, o / 2, f"{o:.1f}", ha="center", va="center", fontsize=7, color=TEXT)
 ax.set_xticks(x); ax.set_xticklabels(hops)
 ax.set_ylabel("Groups with a within-group ordering (%)")
-ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
-ax.legend(frameon=False, loc="upper left", fontsize=6.8, handlelength=1.2, bbox_to_anchor=(0, 1.02))
-fig.tight_layout()
+ax.set_ylim(0, 104); ax.set_yticks([0, 25, 50, 75, 100])
+handles, labels = ax.get_legend_handles_labels()
+fig.legend(handles, labels, frameon=False, loc="lower center", ncol=1, fontsize=7, handlelength=1.2, bbox_to_anchor=(0.55, 0))
+fig.tight_layout(rect=(0, 0.14, 1, 1))
 for ext in ("pdf", "png"):
     fig.savefig(f"{OUT}/fig_repair.{ext}")
 print("saved fig_repair")
