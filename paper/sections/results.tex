@@ -191,11 +191,11 @@ Table~\ref{tab:main-qc}.}
 
 Table~\ref{tab:external} places the trained policies against five
 search-RL systems reproduced under one retrieval environment. On
-wiki18 MuSiQue, continued training against the open retriever reaches
-28.67 EM against 22.09 for ReSearch, the strongest external system
-(paired $z=7.98$); on HotpotQA, 48.55 against 45.00 for Search-R1
-($z=3.94$); on the 139k corpus, the extended-training checkpoint
-reaches 45.64 against 32.77.
+wiki18 MuSiQue, query-level credit with continued training against the
+open retriever reaches 28.55 EM against 22.09 for ReSearch, the
+strongest external system (paired $z=7.80$); on HotpotQA, 48.55 against
+45.00 for Search-R1 ($z=3.94$); on the 139k corpus, the
+extended-training checkpoint reaches 45.64 against 32.77.
 
 \begin{table*}[t]
 \centering
@@ -211,9 +211,8 @@ StepSearch~\citep{zheng-etal-2025-stepsearch}            & 18.25 & 26.96 & 35.15
 Search-R1~\citep{jin2025searchr1}                        & 20.40 & 29.50 & 45.00 & --- & 31.73 \\
 ReSearch~\citep{chen2025research}                        & 22.09 & 32.43 & 44.05 & --- & 32.77 \\
 \midrule
-Ours, query-level credit, + 50 episodes against wiki18   & 28.55 & 38.81 & \textbf{48.55} & 44.45 & 44.97 \\
 \rowcolor{gray!20}
-Ours, outcome-only, + 50 episodes with credit against wiki18 & \textbf{28.67} & \textbf{39.67} & 47.80 & \textbf{47.00} & 43.98 \\
+Ours, query-level credit, + 50 episodes against wiki18   & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & \textbf{44.45} & 44.97 \\
 Ours, extended-training checkpoint (Appendix~E)          & 26.52 & 36.90 & 47.15 & 41.75 & \textbf{45.64} \\
 \bottomrule
 \end{tabular}
@@ -226,8 +225,7 @@ pool union); alias EM and F1 on full MuSiQue dev, HotpotQA and 2Wiki on
 % protocols (Qwen2.5-7B); ours is Qwen3.5-9B. ReSearch and StepSearch are
 % trained on MuSiQue; Search-R1 and R1-Searcher on HotpotQA. Question-level
 % paired McNemar against the strongest external system on each set:
-% MuSiQue vs.\ ReSearch $z=7.98$ (shaded row) / $7.80$; HotpotQA vs.\
-% Search-R1 $z=3.18$ / $3.94$. 2Wiki: external systems not yet run (6 evals);
+% MuSiQue vs.\ ReSearch $z=7.80$ (shaded row); HotpotQA vs.\ Search-R1 $z=3.94$. 2Wiki: external systems not yet run (6 evals);
 % 139k: outcome-only step-100 arm scores 45.72 (non-paired).
 \label{tab:external}
 \end{table*}
