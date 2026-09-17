@@ -12,6 +12,8 @@ from style import C, OUT, PAL, INK, plt
 
 ARMS = [("Outcome-only", PAL["base"]), ("Trajectory-level coverage", PAL["traj"]), ("Query-level credit", PAL["ours"])]
 INKS = {"Outcome-only": INK["base"], "Trajectory-level coverage": INK["traj"], "Query-level credit": INK["ours"]}
+HATCH = {"Outcome-only": "///", "Trajectory-level coverage": "", "Query-level credit": ""}
+LS = {"Outcome-only": ":", "Trajectory-level coverage": "--", "Query-level credit": "-"}
 hops = ["2-hop", "3-hop", "4-hop", "All"]
 em = {  # step 100
     "Outcome-only":              [55.51, 43.42, 31.11, 47.62],
@@ -29,7 +31,7 @@ curve = {
 fig, (ax, bx) = plt.subplots(1, 2, figsize=(6.4, 2.35), gridspec_kw={"width_ratios": [1.25, 1]})
 x = np.arange(len(hops)); w = 0.26
 for k, (name, col) in enumerate(ARMS):
-    ax.bar(x + (k - 1) * w, em[name], w, color=col, label=name, zorder=3)
+    ax.bar(x + (k - 1) * w, em[name], w, color=col, edgecolor=INKS[name], linewidth=0.8, hatch=HATCH[name], label=name, zorder=3)
 for i in range(len(hops)):
     top = max(em[n][i] for n, _ in ARMS)
     ax.text(x[i], top + 1.2, f"+{delta[i]:.1f}\n$z$={zs[i]:.1f}", ha="center", va="bottom", fontsize=7, color=INK["ours"])
@@ -38,7 +40,7 @@ ax.set_ylim(25, 68); ax.yaxis.grid(True, lw=0.4, alpha=0.5, zorder=0)
 ax.set_title("A. Accuracy by depth", loc="left")
 
 for name, col in ARMS:
-    bx.plot(steps, curve[name], "-o", color=col, ms=4.5, label=name, mec=INKS[name], mew=0.6)
+    bx.plot(steps, curve[name], LS[name], color=INKS[name], lw=1.6, marker="o", ms=5, mfc=col, mec=INKS[name], mew=0.8, label=name)
 bx.set_xticks(steps); bx.set_xlabel("training step"); bx.set_ylabel("Exact match (closed pool, full dev)")
 bx.set_ylim(43, 54); bx.yaxis.grid(True, lw=0.4, alpha=0.5)
 bx.set_title("B. Along training", loc="left")
