@@ -258,8 +258,9 @@ strongest of the six reproduced systems on each.}
 \subsection{Comparison with external systems}
 \label{sec:results-external}
 
-Table~\ref{tab:external} places the trained policies against five
-search-RL systems---ZeroSearch~\citep{sun2026zerosearch},
+Table~\ref{tab:external} places the trained policies against six
+search-RL systems---R3-RAG~\citep{li2025r3},
+ZeroSearch~\citep{sun2026zerosearch},
 R1-Searcher~\citep{song2025r1searcher},
 StepSearch~\citep{zheng-etal-2025-stepsearch},
 Search-R1~\citep{jin2025searchr1}, and
@@ -281,6 +282,7 @@ extended-training checkpoint reaches 45.64 against 32.77.
  & \multicolumn{2}{c}{MuSiQue (wiki18)} & HotpotQA (wiki18) & 2Wiki (wiki18) & MuSiQue (139k) \\
 System & EM & F1 & EM & EM & EM \\
 \midrule
+R3-RAG       & ---   & ---   & 38.20 & --- & 16.34 \\
 ZeroSearch   & 9.43  & 16.78 & 30.70 & --- & 11.92 \\
 R1-Searcher  & 15.27 & 22.88 & 39.60 & --- & 24.74 \\
 StepSearch   & 18.25 & 26.96 & 35.15 & --- & 25.49 \\
@@ -301,7 +303,14 @@ pool union); alias EM and F1 on full MuSiQue dev, HotpotQA and 2Wiki on
 % protocols (Qwen2.5-7B); ours is Qwen3.5-9B. ReSearch and StepSearch are
 % trained on MuSiQue; Search-R1 and R1-Searcher on HotpotQA. Question-level
 % paired McNemar against the strongest external system on each set:
-% MuSiQue vs.\ ReSearch $z=7.80$ (shaded row); HotpotQA vs.\ Search-R1 $z=3.94$. 2Wiki: external systems not yet run (6 evals);
+% MuSiQue vs.\ ReSearch $z=7.80$ (shaded row); HotpotQA vs.\ Search-R1 $z=3.94$.
+% R3-RAG (R3-RAG-Qwen, Qwen2.5-7B): free-form answers scored as processed EM
+% (short answer extracted by Qwen2.5-72B for HotpotQA, Qwen3.5-122B for the
+% 139k run; UNANSWERABLE 23.0\% on 139k); HotpotQA 2k-subset value taken from
+% the full-dev (7,405) run by question match; paired vs ours: 139k ep120
+% 773:68 $z=24.3$, HotpotQA q2q1 324:117 $z=9.86$. R3-RAG on wiki18 MuSiQue /
+% 2Wiki: not yet run (r3_wiki18 suite started 2026-09-18, experiment window).
+% 2Wiki: external systems not yet run (6 evals);
 % 139k: outcome-only step-100 arm scores 45.72 (non-paired).
 \label{tab:external}
 \end{table*}
