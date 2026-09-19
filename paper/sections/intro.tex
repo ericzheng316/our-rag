@@ -102,15 +102,23 @@
   coverage expands the share of 4-hop groups with an informative
   ordering from 38\% to 89\%, and on the trained policy the share of
   4-hop groups in which every rollout is wrong falls from 42.9\% to
-  37.3\% ($z=2.7$). \textbf{Third}, on an open 21M-passage corpus the
-  trajectory-level term is a training-environment habit---over three
-  seed-matched pairs it loses 2.75 EM on 2WikiMultihopQA ($z=-6.4$),
-  entirely on questions answered from incomplete evidence---whereas
-  query-level credit carries no such penalty, and continued training
-  against the open retriever yields the best open-corpus results of
-  this study (28.7 EM on MuSiQue, 47.0 on 2WikiMultihopQA), the credit
-  adding $+2.7$ on 2WikiMultihopQA over the same continued training
-  without it ($z=3.7$).
+  37.3\% ($z=2.7$). \textbf{Third}, the gains carry to an open
+  21M-passage corpus. Without any training against it, the query-level
+  arm scores $+3.4$ EM over the trajectory-level term on
+  2WikiMultihopQA ($z=4.5$) and $+4.0$ at four hops on MuSiQue
+  ($z=2.4$); after 50 episodes against the open retriever it reaches
+  28.6 EM on MuSiQue and 48.6 on HotpotQA, above every search-RL system
+  reproduced under the same retriever (ReSearch 22.1, Search-R1 45.0),
+  with the credit adding $+2.7$ on 2WikiMultihopQA over the same
+  continued training without it ($z=3.7$).
+  % 原句(2026-09-16 至 09-18): "\textbf{Third}, on an open 21M-passage corpus
+  % the trajectory-level term is a training-environment habit---over three
+  % seed-matched pairs it loses 2.75 EM on 2WikiMultihopQA ($z=-6.4$),
+  % entirely on questions answered from incomplete evidence---whereas
+  % query-level credit carries no such penalty, and continued training against
+  % the open retriever yields the best open-corpus results of this study (28.7
+  % EM on MuSiQue, 47.0 on 2WikiMultihopQA), the credit adding $+2.7$ on
+  % 2WikiMultihopQA over the same continued training without it ($z=3.7$)."
   % 2026-09-02 用户决议: 安置研究(涉及自训 judge 模型)暂不进 intro 发现列表,
   % 需要时取消注释并把上文 "three findings" 改回 "four"。
   % \textbf{Fourth}, the same signal that helps as a training reward
@@ -134,12 +142,17 @@
     annotations, with the trajectory-level coverage term as the
     controlled contrast that isolates where the signal must enter
     (\S\ref{sec:method}, \S\ref{sec:mechanism}).
-  \item \textbf{Deep-hop gains, and the boundary of the training
-    environment.} $+3.8$ EM and $+8.9$ 4-hop EM over outcome-only
-    training in the closed pool; no penalty on the open corpus, where the
-    trajectory-level term loses up to 5.9 points at four hops; and the
-    best open-corpus results after continued training against the open
-    retriever (\S\ref{sec:results}).
+  \item \textbf{Deep-hop gains and the strongest open-corpus results.}
+    $+3.8$ EM and $+8.9$ 4-hop EM over outcome-only training in the
+    closed pool; on the open corpus, 28.6 EM on MuSiQue and 48.6 on
+    HotpotQA after continued training against the retriever, above all
+    six reproduced search-RL systems (\S\ref{sec:results}).
+    % 原句(2026-09-16 至 09-18): "\textbf{Deep-hop gains, and the boundary of
+    % the training environment.} $+3.8$ EM and $+8.9$ 4-hop EM over
+    % outcome-only training in the closed pool; no penalty on the open corpus,
+    % where the trajectory-level term loses up to 5.9 points at four hops; and
+    % the best open-corpus results after continued training against the open
+    % retriever."
   \item \textbf{A signal-placement study.} The same evidence signal helps
     in training and offline audit but not as runtime control or injected
     observation (\S\ref{sec:placement}).
