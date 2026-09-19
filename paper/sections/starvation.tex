@@ -117,9 +117,13 @@ A^{\mathrm{cov}}_i \;=\; \beta\Bigl(C_i - \frac{1}{K-1}\sum_{j\neq i}
 C_j\Bigr) \;=\; \beta\,\frac{K}{K-1}\bigl(C_i - \bar{C}\bigr)
 \label{eq:cov-advantage}
 \end{equation}
-to the advantage: a common coverage offset cancels, and what remains is
-a within-group ordering by evidence progress. This term is non-zero
-exactly when coverage varies inside the group.
+to the advantage. The group mean $\bar{C}$ enters every rollout of
+the group identically, so only each rollout's deviation from it
+survives: the term ranks the rollouts of a group by coverage, and it
+is zero when they all reach the same coverage.
+% 原句: "a common coverage offset cancels, and what remains is a within-group
+% ordering by evidence progress. This term is non-zero exactly when coverage
+% varies inside the group." 
 % ---- §3.4 前提条件草案(2026-09-03, 用户决议: 先以注释落档, 整段把关后再启用) ----
 % Coverage varies only where rollouts can reach gold documents under the
 % sampling policy. Training in the closed pool guarantees this: every gold
