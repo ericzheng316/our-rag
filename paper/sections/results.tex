@@ -166,7 +166,7 @@ Appendix~\ref{app:extended} scores 45.64 against 32.77.
  & \multicolumn{2}{c}{MuSiQue (wiki18)} & HotpotQA (wiki18) & 2Wiki (wiki18) & MuSiQue (139k) \\
 System & EM & F1 & EM & EM & EM \\
 \midrule
-R3-RAG       & 14.77 & 22.88 & 44.50 & \textbf{47.65} & 17.17 \\
+R3-RAG       & 14.77 & 22.88 & 44.50 & \cellcolor{best}47.65 & 17.17 \\
 ZeroSearch   & 9.43  & 16.78 & 30.70 & 27.95 & 11.92 \\
 R1-Searcher  & 15.27 & 22.88 & 39.60 & 39.40 & 24.74 \\
 StepSearch   & 18.25 & 26.96 & 35.15 & 36.20 & 25.49 \\
@@ -174,15 +174,15 @@ Search-R1    & 20.40 & 29.50 & 45.00 & 39.75 & 31.73 \\
 ReSearch     & 22.09 & 32.43 & 44.05 & 44.15 & 32.77 \\
 \midrule
 Ours, closed-pool training only (step 100) & 26.35 & 36.28 & 45.60 & 40.45 & --- \\
-\rowcolor{shade}
-Ours, + 50 episodes against wiki18 & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & 44.45 & 44.97 \\
-Ours, extended training (App.~\ref{app:extended}) & 26.52 & 36.90 & 47.15 & 41.75 & \textbf{45.64} \\
+Ours, + 50 episodes against wiki18 & \cellcolor{best}28.55 & \cellcolor{best}38.81 & \cellcolor{best}48.55 & \cellcolor{second}44.45 & \cellcolor{second}44.97 \\
+Ours, extended training (App.~\ref{app:extended}) & \cellcolor{second}26.52 & \cellcolor{second}36.90 & \cellcolor{second}47.15 & 41.75 & \cellcolor{best}45.64 \\
 \bottomrule
 \end{tabular}
 \caption{Open-corpus results and comparison with search-RL systems under one retrieval
 environment (e5-base-v2 over wiki18 or over the 139k-paragraph MuSiQue
 pool union); alias EM and F1 on full MuSiQue dev, HotpotQA and 2Wiki on
-2{,}000-question subsets.}
+2{,}000-question subsets. Per column, the deeper shade marks the
+highest value and the lighter shade the second highest.}
 % 表注待定(用户 2026-09-16: 先以注释保留):
 % External systems are run with their released checkpoints and official
 % protocols (Qwen2.5-7B); ours is Qwen3.5-9B. ReSearch and StepSearch are
