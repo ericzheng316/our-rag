@@ -134,6 +134,90 @@ queries with the gold paragraphs' titles.}
 \label{tab:reach}
 \end{table}
 
+% 2026-09-20: 原 §4.5 / 4.6 / 4.7 移入附录
+\section{The trajectory-level coverage term}
+\label{app:traj}
+\label{sec:method-effect}
+
+The alternative placement adds coverage to the trajectory return,
+\begin{equation}
+R^{\mathrm{cov}}(\tau) \;=\; R(\tau) \;+\;
+\mathbf{1}\!\left[\mathrm{ans}(\tau)\right]\, \beta\, C(\tau),
+\label{eq:covreward}
+\end{equation}
+gated on the rollout committing to an answer: without the gate, an
+abstaining rollout collects coverage credit, and in ungated runs
+abstention rates rose with coverage reward. Its contribution to the
+leave-one-out advantage is $\beta\,\tfrac{K}{K-1}\bigl(C_i -
+\bar{C}\bigr)$ (Eq.~\ref{eq:cov-advantage}): a within-group ordering of
+whole trajectories by coverage, broadcast to every turn. We train this
+variant with $\beta=0.3$ as the controlled contrast; \S\ref{sec:mech-broadcast}
+measures what the broadcast does at the level of turns.
+
+\section{Stabilizing long-horizon optimization}
+\label{app:kl}
+\label{sec:method-kl}
+
+Trajectories mix two token populations: protocol actions and free
+tokens. We regularize the two channels separately: a weak KL
+coefficient on action tokens and a strong KL coefficient on free
+tokens, both toward the SFT reference policy, which rarely emits free
+tokens. Under a uniform coefficient, free tokens grow geometrically
+until training collapses, and interventions on the gradient
+channel---token pricing at several rates, full and asymmetric gradient
+masking---leave the growth rate unchanged (six runs, five
+interventions; Fig.~\ref{fig:ftk}). With split
+coefficients, free-token counts stay flat over the full schedule.
+Replacing the reference policy with a mid-training checkpoint that has
+a high free-token rate re-ignites inflation within seven episodes (mean
+free tokens per turn $0.7 \rightarrow 7.2$); an otherwise-identical run
+that keeps the SFT reference policy does not.
+
+% ---- KL 图(用户 2026-09-03: 先放占位符) ----
+% 成图: paper_assets/fig_ftk_forensics.{pdf,png}(生成器 fig_ftk_forensics.py)
+% 入稿前: 图例 "two-tier KL anchor (ours)"、"re-anchored ref" 改成 reference
+% 措辞; 然后把下面的 \fbox 占位换成
+% \includegraphics[width=\columnwidth]{../paper_assets/fig_ftk_forensics.pdf}
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.95\columnwidth}{\centering\vspace{2em}
+[Figure placeholder: free tokens per turn (log scale) over training
+episodes---uniform KL with no intervention, token cost, full and
+asymmetric gradient masking, replaced reference policy; two-tier KL
+toward the SFT reference policy.]\vspace{2em}}}
+\caption{Free tokens per turn over training under a uniform KL
+coefficient with five interventions, versus the two-tier KL toward the
+SFT reference policy. [Placeholder.]}
+\label{fig:ftk}
+\end{figure}
+
+\section{Training procedure and hyperparameters}
+\label{app:procedure}
+\label{sec:method-algo}
+
+Each training step proceeds as follows.
+\begin{enumerate}\setlength\itemsep{1pt}
+\item Sample $K$ rollouts per question from the current policy under the
+  search protocol.
+\item Parse actions and execute searches against the environment. At
+  each search turn, sample $M$ queries from the same state, retrieve
+  for each, and record first-time gold-title hits for the executed query
+  and for each sample.
+\item Compute trajectory returns by Eq.~\ref{eq:base-reward} and query
+  credits by Eq.~\ref{eq:credit}.
+\item Compute leave-one-out advantages within each question group,
+  broadcast each trajectory's advantage to its tokens, and add the
+  credit of each search turn to that turn's tokens (Eq.~\ref{eq:turn-adv}).
+\item Apply the policy-gradient update with channel-specific KL
+  regularization; a small auxiliary value head serves as a variance
+  monitor (Appendix~C).
+\end{enumerate}
+Query-level credit uses $M=3$ same-state samples per search turn and
+$\beta_q=1$; the trajectory-level term uses $\beta=0.3$
+(Appendix~\ref{app:traj}). Search cost $\lambda_s=0.015$, free-token
+price $10^{-3}$, KL coefficients 0.02 (action tokens) and 0.5 (free
+tokens). Remaining infrastructure and guard criteria: TODO (原附录 C 材料).
+
 \section{Extended related work}
 \label{app:related}
 % 2026-09-20: 正文 §2 压到一栏, 原全文移入此处(原 sections/related.tex v1, 2026-08-31 至 09-18)。
