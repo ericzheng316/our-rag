@@ -1,8 +1,7 @@
 % ============================================================
-% Section 1 — Introduction (v3, 2026-09-16: 主方法改为查询级证据信用)
-% v2 (2026-08-28, 广播覆盖项为主方法) 的第 4-5 段与贡献列表以注释保留在文末。
-% 数据: HANDOFF §22 (K=8 修正), §29/§30 (查询级信用 seed 1), §16/§20 (开放域三对),
-%       §31-§37 (开放续训), §33 (训练后 K=8)
+% Section 1 — Introduction (v4, 2026-09-20: 压缩 + 第一页右栏机制图占位 + 去掉安置贡献)
+% v3 (2026-09-16/18) 被压缩/删除的部分以注释保留在文末; v2 原句见 git 历史。
+% 数据: HANDOFF §22 (K=8 修正), §29/§30 (查询级信用 seed 1), §31-§37 (开放续训), §33 (训练后 K=8)
 % ============================================================
 
 \section{Introduction}
@@ -36,8 +35,7 @@
   depth. Depth changes which kind of tie dominates. At two hops, 28\% of
   groups are tied because every rollout is right; at four hops that share
   falls to 4\%, and 57\% of all groups are tied because every rollout is
-  wrong.\footnote{Measured at the SFT initialization with $K{=}8$ rollouts
-  at the training temperature; protocol in \S\ref{sec:mechanism}.} In an
+  wrong (Fig.~\ref{fig:teaser}). In an
   answer-tied group the terminal reward is the same for all $K$ rollouts
   and contributes nothing to any advantage: a rollout that retrieved half
   of the gold evidence chain and one that retrieved none receive identical
@@ -48,83 +46,66 @@
   highest. On the questions where the agent most needs to learn to keep
   searching, the training signal rewards stopping early.
 
-  This failure mode has recently been named in mathematical
-  RLVR---\emph{advantage collapse}~\citep{he2026collapse}---and existing
-  mitigations fall into three families. Discarding methods drop or skip
-  uniform-outcome groups by dynamic sampling or
-  filtering~\citep{yu2025dapo,greso2025,xu2026downsampling}, recovering
-  compute but abandoning exactly the hardest questions. Synthetic-advantage
-  methods inject virtual reward samples so that collapsed groups still
-  produce a learning signal~\citep{he2026collapse}, but the signal is
-  content-free: the ordering inside a tied group remains arbitrary.
-  Structural methods re-baseline the comparison itself, stratifying
-  advantages by trajectory structure~\citep{zhu2025grpo} or comparing
-  along shared tree prefixes~\citep{Ji2026tree}; this repairs
-  cross-question fairness but leaves a fully tied group as uninformative as
-  before. Leaving such groups to chance is not neutral: in GRPO training,
-  whatever residual signal occupies an all-failure group can come to govern
-  the learned policy outright~\citep{wang2026darkroom}. Tied groups should
-  be neither thrown away nor filled with noise; what they need is an
-  ordering that \emph{means} something.
+% ---- Fig 1 占位(单栏, 第一页右栏顶; 用户 2026-09-20: 先写好位置) ----
+% 内容建议: 一个 4-hop 全错组的 K 条 rollout, 左列 outcome-only 优势(按搜索次数排),
+% 右列查询级信用(按证据到达量排); 或 tie 账本三柱。成图后换 \includegraphics。
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.95\columnwidth}{\centering\vspace{7em}
+[Figure~1 placeholder, single column: an answer-tied group under the
+answer reward (identical reward; the cost terms rank the rollout that
+searched least first) and under query-level credit (the query that
+reached new evidence is credited).]\vspace{7em}}}
+\caption{Answer ties and their repair. [Placeholder.]}
+\label{fig:teaser}
+\end{figure}
 
-  Standard multi-hop training sets already contain the information that
-  breaks these ties: gold supporting documents~\citep{trived2022musique,
-  yang2018hotpotqa}. Where this information enters the estimator decides
-  what the policy learns from it. Added to the trajectory return as an
-  evidence-coverage term, it reorders whole trajectories: the estimator
-  computes one advantage per rollout and broadcasts it to every turn, so
-  the search step that reached new evidence and the answer step that
-  followed receive the same sign. This placement teaches the policy
-  \emph{when to answer}---withhold until the evidence set is
-  complete---a habit that pays inside the training environment and costs
-  outside it (\S\ref{sec:mechanism}, \S\ref{sec:results-open}). We therefore
+  This failure mode has been named in mathematical RLVR as
+  \emph{advantage collapse}~\citep{he2026collapse}, and existing
+  mitigations discard uniform-outcome
+  groups~\citep{yu2025dapo,greso2025,xu2026downsampling}, inject virtual
+  reward samples~\citep{he2026collapse}, or re-baseline the comparison
+  by trajectory structure~\citep{zhu2025grpo,Ji2026tree}. None gives a
+  tied group an ordering with content; and left to chance, whatever
+  residual signal occupies an all-failure group can come to govern the
+  learned policy~\citep{wang2026darkroom}. Standard multi-hop training
+  sets already contain the information that breaks these ties: gold
+  supporting documents~\citep{trived2022musique,yang2018hotpotqa}.
+
+  Where this information enters the estimator decides what the policy
+  learns from it. Added to the trajectory return as an evidence-coverage
+  term, it reorders whole trajectories: one advantage per rollout,
+  broadcast to every turn, so the search step that reached new evidence
+  and the answer step that followed receive the same sign; the policy
+  learns \emph{when to answer}, a habit that pays inside the training
+  environment and costs outside it (\S\ref{sec:mechanism}). We therefore
   assign the credit at the query step. At each search turn we sample $M$
   additional queries from the current policy at the same state, retrieve
-  for each against the same environment, and credit the executed query by
-  its gold-evidence gain relative to the mean gain of the samples: a
-  state-conditional baseline estimated from the policy's own action
-  distribution, as in the vine estimator of \citet{schulman2015trpo}. The credit needs the dataset's gold annotations and the
-  retriever, nothing else, and is used only during training. Answer turns
-  receive the outcome reward alone. In an answer-tied group the credit is
-  non-zero wherever the executed query and its alternatives reach
-  different evidence, which is where the tie is broken.
+  for each, and credit the executed query by its gold-evidence gain
+  relative to the mean gain of the samples: a state-conditional baseline
+  estimated from the policy's own action distribution, as in the vine
+  estimator of \citet{schulman2015trpo}. The credit needs the dataset's
+  gold annotations and the retriever, nothing else, and is used only
+  during training. In an answer-tied group it is non-zero wherever the
+  executed query and its alternatives reach different evidence, which is
+  where the tie is broken.
 
   Our experiments on MuSiQue with a Qwen3.5-9B policy yield three
   findings. \textbf{First}, query-level credit improves deep search in
-  the training environment: on the closed-pool development set it
-  reaches 51.4 exact match against 47.6 for outcome-only training and
-  47.5 for the trajectory-level coverage term from the same
-  initialization and seed ($z=4.7$ and $4.9$), with 4-hop EM 40.0
-  against 31.1 ($z=4.1$), higher final evidence coverage, and 0.6 fewer
-  search calls per question. \textbf{Second}, a group-level audit
-  locates the gain: at the training start, 84\% of 4-hop answer-tied
-  groups carry coverage variation the answer reward cannot see, adding
-  coverage expands the share of 4-hop groups with an informative
-  ordering from 38\% to 89\%, and on the trained policy the share of
-  4-hop groups in which every rollout is wrong falls from 42.9\% to
-  37.3\% ($z=2.7$). \textbf{Third}, the gains carry to an open
-  21M-passage corpus. Without any training against it, the query-level
-  arm scores $+3.4$ EM over the trajectory-level term on
-  2WikiMultihopQA ($z=4.5$) and $+4.0$ at four hops on MuSiQue
-  ($z=2.4$); after 50 episodes against the open retriever it reaches
-  28.6 EM on MuSiQue and 48.6 on HotpotQA, above every search-RL system
-  reproduced under the same retriever (ReSearch 22.1, Search-R1 45.0),
-  with the credit adding $+2.7$ on 2WikiMultihopQA over the same
-  continued training without it ($z=3.7$).
-  % 原句(2026-09-16 至 09-18): "\textbf{Third}, on an open 21M-passage corpus
-  % the trajectory-level term is a training-environment habit---over three
-  % seed-matched pairs it loses 2.75 EM on 2WikiMultihopQA ($z=-6.4$),
-  % entirely on questions answered from incomplete evidence---whereas
-  % query-level credit carries no such penalty, and continued training against
-  % the open retriever yields the best open-corpus results of this study (28.7
-  % EM on MuSiQue, 47.0 on 2WikiMultihopQA), the credit adding $+2.7$ on
-  % 2WikiMultihopQA over the same continued training without it ($z=3.7$)."
-  % 2026-09-02 用户决议: 安置研究(涉及自训 judge 模型)暂不进 intro 发现列表,
-  % 需要时取消注释并把上文 "three findings" 改回 "four"。
-  % \textbf{Fourth}, the same signal that helps as a training reward
-  % and as an offline audit yields no reliable gain as a runtime controller
-  % or as an injected observation: evidence supervision is
-  % placement-sensitive.
+  the training environment: 51.4 exact match on the closed-pool
+  development set against 47.6 for outcome-only training ($z=4.7$), with
+  4-hop EM 40.0 against 31.1 ($z=4.1$), higher final evidence coverage,
+  and 0.6 fewer search calls per question. \textbf{Second}, a
+  group-level audit locates the gain: adding coverage expands the share
+  of 4-hop groups with an informative ordering from 38\% to 89\%, and on
+  the trained policy the share of 4-hop groups in which every rollout is
+  wrong falls from 42.9\% to 37.3\% ($z=2.7$). \textbf{Third}, the gains
+  carry to an open 21M-passage corpus: after 50 episodes against the
+  open retriever the policy reaches 28.6 EM on MuSiQue and 48.6 on
+  HotpotQA, above every search-RL system reproduced under the same
+  retriever (ReSearch 22.1, Search-R1 45.0), with the credit adding
+  $+2.7$ on 2WikiMultihopQA over the same continued training without it
+  ($z=3.7$).
 
   Our contributions:
   \begin{itemize}\setlength\itemsep{2pt}
@@ -132,60 +113,56 @@
     deep-search RL (56--71\% of groups), shift with depth from all-right
     ties to all-wrong ties (57\% of 4-hop groups), and carry a
     cost-driven residual ordering that favors the rollout that searched
-    least---an account of deep-hop stagnation that
-    temporal sparsity does not capture, complementing advantage-collapse
-    analyses in mathematical RLVR~\citep{yu2025dapo,he2026collapse}
-    (\S\ref{sec:starvation}).
+    least (\S\ref{sec:method}).
   \item \textbf{Query-level evidence credit.} A turn-level credit for
-    search queries, computed against a state-conditional counterfactual
-    baseline from the policy's own samples and the dataset's gold
-    annotations, with the trajectory-level coverage term as the
-    controlled contrast that isolates where the signal must enter
+    search queries, computed against a state-conditional baseline from
+    the policy's own samples and the dataset's gold annotations
     (\S\ref{sec:method}, \S\ref{sec:mechanism}).
   \item \textbf{Deep-hop gains and the strongest open-corpus results.}
     $+3.8$ EM and $+8.9$ 4-hop EM over outcome-only training in the
     closed pool; on the open corpus, 28.6 EM on MuSiQue and 48.6 on
     HotpotQA after continued training against the retriever, above all
     six reproduced search-RL systems (\S\ref{sec:results}).
-    % 原句(2026-09-16 至 09-18): "\textbf{Deep-hop gains, and the boundary of
-    % the training environment.} $+3.8$ EM and $+8.9$ 4-hop EM over
-    % outcome-only training in the closed pool; no penalty on the open corpus,
-    % where the trajectory-level term loses up to 5.9 points at four hops; and
-    % the best open-corpus results after continued training against the open
-    % retriever."
-  \item \textbf{A signal-placement study.} The same evidence signal helps
-    in training and offline audit but not as runtime control or injected
-    observation (\S\ref{sec:placement}).
   \end{itemize}
 
 % ---------------------------------------------------------------
-% v2 原文(2026-08-28 至 09-03, 广播覆盖项为主方法), 供回溯:
-% 第 4 段: "Standard multi-hop training sets already contain the information
-% that breaks these ties: gold supporting documents. We add to the trajectory
-% return a \emph{completion-gated, first-hit evidence-coverage} term. We
-% compute coverage as the set overlap between retrieved evidence and training
-% annotations; the signal is deterministic and used only during training. A
-% rollout is credited once for each gold document it retrieves, normalized
-% by the size of the gold set, and receives the credit only if it commits to
-% an answer. Under a trajectory-level group-relative estimator the term acts
-% on whole-trajectory returns; its effect---simpler than step-level process
-% supervision---is to \emph{restore within-group ranking}. Uniformly failing
-% rollouts become ordered by how much of the required evidence they actually
-% reached, rather than by how little they spent failing."
-% 发现一: "coverage shaping improves deep-hop accuracy: pooled over four
-% matched pairs of runs, 4-hop exact match improves by $+3.6$ points over the
-% outcome-only counterpart ($z=3.62$), positive in three of the four pairs,
-% with overall EM up $+0.9$ and search calls per question unchanged."
-% 发现二: "... 89\% of 4-hop answer-tied groups carry coverage variation ...
-% from 38\% to 93\% ..." (K=8 分隔符 bug 修正前的数字)
-% 发现三: "the gains transfer zero-shot: $+2.05$ EM on 2WikiMultihopQA
-% ($+4.52$ at four hops) and $+4.75$ on HotpotQA comparison questions ..."
-% (单对结论, 三对配对撤回)
-% 贡献二: "\textbf{A trajectory-ranking repair.} Completion-gated first-hit
-% coverage, deterministic and used only during training, restores
-% within-group ordering where prior mitigations discard, synthesize, or
-% re-baseline."
-% 贡献三: "\textbf{Deep-hop gains that transfer.} 4-hop improvements over
-% matched outcome-only runs at unchanged search cost, and zero-shot transfer
-% to 2WikiMultihopQA and HotpotQA comparison questions."
+% v3 原文(2026-09-16 至 09-18)中被压缩/删除的部分, 供回溯:
+% 第 3 段(三派): "This failure mode has recently been named in mathematical
+% RLVR---\emph{advantage collapse}---and existing mitigations fall into three
+% families. Discarding methods drop or skip uniform-outcome groups by dynamic
+% sampling or filtering, recovering compute but abandoning exactly the hardest
+% questions. Synthetic-advantage methods inject virtual reward samples so that
+% collapsed groups still produce a learning signal, but the signal is
+% content-free: the ordering inside a tied group remains arbitrary. Structural
+% methods re-baseline the comparison itself, stratifying advantages by
+% trajectory structure or comparing along shared tree prefixes; this repairs
+% cross-question fairness but leaves a fully tied group as uninformative as
+% before. Leaving such groups to chance is not neutral: in GRPO training,
+% whatever residual signal occupies an all-failure group can come to govern
+% the learned policy outright. Tied groups should be neither thrown away nor
+% filled with noise; what they need is an ordering that \emph{means}
+% something."
+% 第 4 段(方法)原有: "This placement teaches the policy \emph{when to
+% answer}---withhold until the evidence set is complete---a habit that pays
+% inside the training environment and costs outside it (\S mechanism,
+% \S results-open)." / "Answer turns receive the outcome reward alone."
+% 发现一原有: "against 47.6 for outcome-only training and 47.5 for the
+% trajectory-level coverage term from the same initialization and seed
+% ($z=4.7$ and $4.9$)"; 发现二原有: "at the training start, 84\% of 4-hop
+% answer-tied groups carry coverage variation the answer reward cannot see";
+% 发现三原有: "Without any training against it, the query-level arm scores
+% $+3.4$ EM over the trajectory-level term on 2WikiMultihopQA ($z=4.5$) and
+% $+4.0$ at four hops on MuSiQue ($z=2.4$);"
+% 贡献一原有尾句: "---an account of deep-hop stagnation that temporal sparsity
+% does not capture, complementing advantage-collapse analyses in mathematical
+% RLVR~\citep{yu2025dapo,he2026collapse}"; 贡献二原有: "with the
+% trajectory-level coverage term as the controlled contrast that isolates
+% where the signal must enter".
+% 贡献四(已撤, 安置研究进附录): "\textbf{A signal-placement study.} The same
+% evidence signal helps in training and offline audit but not as runtime
+% control or injected observation (\S placement)."
+% 发现四(注释版, 已撤): "\textbf{Fourth}, the same signal that helps as a
+% training reward and as an offline audit yields no reliable gain as a runtime
+% controller or as an injected observation: evidence supervision is
+% placement-sensitive."
 % ---------------------------------------------------------------
