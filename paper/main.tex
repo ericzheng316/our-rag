@@ -41,17 +41,17 @@ TODO: abstract (write last, per outline \S14).
 \input{sections/related}        % §2
 % \input{sections/starvation}   % 2026-09-20 并入 sections/method.tex (§3 Method); 原文件改名 retired_starvation.tex
 \input{sections/method}         % §3 Method (原 §3+§4)
-\input{sections/setup}          % §5
-\input{sections/results}        % §6
-\input{sections/mechanism}      % §7
+% \input{sections/setup}        % 2026-09-20 压缩版并入 results.tex §4.1; 全文版在附录 app:setup
+\input{sections/results}        % §4 Experiments (原 §5+§6)
+\input{sections/mechanism}      % §5 Analysis
 % \input{sections/transfer}      % §8 于 2026-09-16 拆入 §6.5/6.6/§7.4/附录; 原文件改名 retired_transfer.tex
-\input{sections/placement}      % §9
-% \input{sections/limitations}  % §10 Limitations
-% \input{sections/conclusion}   % §11 Conclusion
+\input{sections/conclusion}     % §6
+\input{sections/limitations}    % Limitations (unnumbered)
 
 \bibliography{refs}
 
 \appendix
 \input{sections/appendix}
+\input{sections/placement}      % 附录: 安置研究 (2026-09-20 自正文 §9 移入)
 
 \end{document}

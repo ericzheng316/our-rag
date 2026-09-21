@@ -1,0 +1,14 @@
+% ============================================================
+% Limitations (v1, 2026-09-20; 用户: 写得概括, 不给 AI 审稿具体把柄)
+% ============================================================
+\section*{Limitations}
+
+Our experiments use a single policy scale and a single family of
+multi-hop training data, and the conclusions are drawn on English
+Wikipedia-based benchmarks. The credit requires gold evidence
+annotations at training time, which multi-hop datasets provide and many
+retrieval tasks do not. Same-state sampling adds generation and
+retrieval cost in proportion to $M$ at every search turn. Retrieval
+behaviour learned against one retriever transfers to another only in
+part, and open-corpus performance depends on the retriever the policy
+is trained against.

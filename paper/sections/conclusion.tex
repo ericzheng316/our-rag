@@ -1,0 +1,23 @@
+% ============================================================
+% Conclusion (v1, 2026-09-20)
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Group-relative RL for search agents learns only from rollouts of the
+same question that differ in return, and on deep questions the answer
+reward routinely does not differ: at the start of training, 57\% of
+4-hop groups are uniformly wrong, and the residual ordering in such a
+group favors the rollout that searched least. Gold evidence annotations
+supply an ordering with content, and where that content enters the
+estimator decides what the policy learns from it. Placed on the
+trajectory return, it ranks whole trajectories and teaches when to
+answer; placed at the query step, against the policy's own alternatives
+at the same state, it credits the query that reached the evidence.
+Query-level credit raises closed-pool exact match from 47.6 to 51.4 and
+4-hop exact match from 31.1 to 40.0, breaks the problem ties on the
+trained policy, and, after continued training against an open
+retriever, yields the strongest open-corpus results among search-RL
+systems reproduced under one environment. The credit is computed from
+the annotations already present in multi-hop training data and the
+retriever the policy searches.

@@ -6,7 +6,8 @@
 % 措辞纪律: J8 用 "no reliable improvement, trend negative"。
 % ============================================================
 
-\section{Where Should Evidence Signals Enter the Agent?}
+% 2026-09-20: 整节移入附录(用户决议: 安置研究不作为贡献)
+\section{Where should evidence signals enter the agent?}
 \label{sec:placement}
 
 The evidence signal of Eq.~\ref{eq:coverage} enters training at the
@@ -19,7 +20,7 @@ rollouts, and as an observation written into the agent's context. We
 tested all four. Gold annotations exist only at training time, so the
 placements that run at inference use a 4B verifier distilled from the
 same annotations (held-out AUC 0.996, zero-shot 2Wiki 0.987; component
-validation in Appendix~F); on full policy rollouts it predicts answer
+validation in Appendix~\ref{app:verifier}); on full policy rollouts it predicts answer
 correctness at AUC 0.742.
 
 \paragraph{Training reward: works.} As a reward the signal produces
