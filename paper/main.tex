@@ -1,29 +1,31 @@
 % ============================================================
-% Breaking Answer Ties: Evidence-Coverage Rewards for
-% Deep Multi-Hop Search
+% Breaking Answer Ties: Query-Level Evidence Credit for Deep Multi-Hop Search
 % ARR submission target: 2026-10-15
-%
-% TODO(template): 换成官方 ARR/ACL 模板(acl.sty + acl_natbib);
-% 当前用 article 类做可编译占位, 章节文件不动即可迁移。
+% 模板: 官方 ACL (acl.sty + acl_natbib.bst, acl-org/acl-style-files master, 2026-09-20 取)。
+% review 选项 = 匿名 + 行号 + 页码; 投稿后终版改 final。
 % ============================================================
 \documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb}
+\PassOptionsToPackage{table}{xcolor}   % \rowcolor for the shaded row in tab:external
+\usepackage[review]{acl}                % loads geometry, natbib, hyperref, caption
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}                % optional; comment out if the font is unavailable
 \usepackage{graphicx}
+\usepackage{amsmath,amssymb}
 \usepackage{booktabs}
-\usepackage[table]{xcolor}   % \rowcolor for the shaded best row in tab:external
+\usepackage{xcolor}
 \definecolor{shade}{HTML}{F2E5B8}       % paper_assets/PALETTE.md v2 奶油黄: 表格主行
 \definecolor{shadestrong}{HTML}{F3CED6} % 淡粉: 重点区域
-\usepackage{url}
-\usepackage[hidelinks]{hyperref}
-\usepackage{natbib}
-\bibliographystyle{plainnat}   % TODO: acl_natbib
+\bibliographystyle{acl_natbib}
+% 原 preamble(article + geometry + plainnat 占位)已替换, 2026-09-20。
 
 \title{Breaking Answer Ties: Query-Level Evidence Credit for\\
 Deep Multi-Hop Search}
 % 原题(2026-09-16 前): Breaking Answer Ties: Evidence-Coverage Rewards for Deep Multi-Hop Search
-\author{Anonymous ARR submission}
-\date{}
+\author{Anonymous ARR submission \\ Anonymous affiliation}
 
 \begin{document}
 \maketitle
