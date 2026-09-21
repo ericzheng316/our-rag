@@ -23,9 +23,9 @@ from the SFT initialization on a stratified closed-pool question set
 compute each rollout's coverage by the reward's definition
 (Eq.~\ref{eq:coverage}), and classify every group by its answer
 outcomes and its within-group coverage variation. The same audit is
-repeated on trained policies: the trajectory-level arm after 100
+repeated on trained policies: the trajectory-level variant after 100
 episodes (\S\ref{sec:mech-evolution}) and the query-level and
-outcome-only arms at step 100 (\S\ref{sec:mech-broken}).
+outcome-only variants at step 100 (\S\ref{sec:mech-broken}).
 
 \subsection{Coverage supplies ordering where outcomes are silent}
 \label{sec:mech-repair}
@@ -101,15 +101,15 @@ receives a positive advantage 58.9\% and 45.1\% of the time; the
 correlation between a turn's advantage and the evidence it gained is
 0.04--0.25. The signal ranks trajectories but reaches no individual
 step. What the policy can learn from it is the decision the trajectory
-return does see---whether to answer---and the trajectory-level arm
+return does see---whether to answer---and the trajectory-level variant
 learns exactly that: in all three retrieval environments its final
-coverage equals the outcome-only arm's (81.0 vs.\ 81.2\% in the closed
+coverage equals the outcome-only variant's (81.0 vs.\ 81.2\% in the closed
 pool, 78.5 vs.\ 78.6 on the 139k corpus, 46.0 vs.\ 46.2 on wiki18),
-and the one measure on which the arms differ is the rate of correct
+and the one measure on which the variants differ is the rate of correct
 answers given from partial coverage, lower for the trajectory-level
-arm in every environment ($z=-1.81$, $-2.88$, $-3.35$). The habit
+variant in every environment ($z=-1.81$, $-2.88$, $-3.35$). The habit
 costs outside the training environment: over the three explicit-seed
-pairs on wiki18, the trajectory-level arm loses 0.8 EM on MuSiQue
+pairs on wiki18, the trajectory-level variant loses 0.8 EM on MuSiQue
 ($z=-2.47$), is flat on HotpotQA ($z=-1.29$), and loses 2.75 EM on
 2WikiMultihopQA ($z=-6.40$; 5.9 points at four hops;
 Table~\ref{tab:open-pairs}, Appendix~\ref{app:open-tables}). In the
@@ -134,52 +134,10 @@ spread is 0.03--0.09: the policy's queries at a state tend to succeed or
 fail together, which bounds what on-policy resampling can supply
 there (\S\ref{sec:results-stage2}).
 
-\subsection{Ties are broken on the trained policy}
-\label{sec:mech-broken}
-
-Table~\ref{tab:k8-arms} audits the query-level and outcome-only arms
-of seed 1 at step 100 with the same protocol. On the same 799
-questions, the query-level arm has fewer all-wrong groups (32.5\% vs.\
-35.5\%; at four hops 37.3\% vs.\ 42.9\%, 31 groups resolved against 13
-lost, $z=2.71$) and more all-correct groups (19.4\% vs.\ 14.9\%; at four
-hops 12.5\% vs.\ 7.8\%). Sampled accuracy is higher (pass@1 42.5 vs.\
-38.1; at four hops 36.9 vs.\ 30.2) and so is pass@8 (67.5 vs.\ 64.5; at
-four hops 62.7 vs.\ 57.1). The coverage variation inside tied groups
-and its within-group AUC are the same for both arms (4-hop groups with
-coverage variation 83.6 vs.\ 81.5\%; AUC 0.85 vs.\ 0.85): the signal
-itself does not change with training; what changes is that the
-query-level arm has used it. The ties that disappear are the
-problem ties, and the ties that appear are solved ones.
-
-\begin{table}[t]
-\centering
-\small
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lcccc}
-\toprule
-$K{=}8$, step 100 & \multicolumn{2}{c}{All groups} & \multicolumn{2}{c}{4-hop} \\
- & Query credit & Outcome & Query credit & Outcome \\
-\midrule
-All-wrong groups (\%)   & \textbf{32.5} & 35.5 & \textbf{37.3} & 42.9 \\
-All-correct groups (\%) & \textbf{19.4} & 14.9 & \textbf{12.5} & 7.8 \\
-pass@1                  & \textbf{42.5} & 38.1 & \textbf{36.9} & 30.2 \\
-pass@8                  & \textbf{67.5} & 64.5 & \textbf{62.7} & 57.1 \\
-\bottomrule
-\end{tabular}}
-\caption{The tie ledger on the trained policies (seed 1, step 100, 799
-closed-pool questions, temperature 0.7). Groups in which every rollout
-is wrong fall and groups in which every rollout is right rise under
-query-level credit; at four hops, 31 all-wrong groups of the
-outcome-only arm are resolved against 13 that the query-level arm loses
-($z=2.71$). At the SFT initialization the shares are 50.1\% all-wrong and
-11.1\% all-correct (57.4\% and 4.4\% at four hops).}
-\label{tab:k8-arms}
-\end{table}
-
 \subsection{Ties persist under the trajectory-level term}
 \label{sec:mech-evolution}
 
-Auditing the trajectory-level arm after 100 episodes, answer-tied
+Auditing the trajectory-level variant after 100 episodes, answer-tied
 groups remain the majority at every depth (56.2/46.9/50.2\%), and the
 informative-share expansion from coverage remains
 $\times$1.61/1.69/1.87. Answer ties are a standing property of deep

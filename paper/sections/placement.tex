@@ -48,10 +48,10 @@ evidence scoring systematically undervalues rollouts that reach the
 answer off-plan.
 
 \paragraph{Injected observation: fails.} From a common checkpoint,
-two arms trained in the same window under identical guard criteria:
+two variants trained in the same window under identical guard criteria:
 one receives a verifier-computed slot-status line in every
 observation, one does not. At the last common evaluation step the
-injected arm scores 46.71 versus 47.83 for the control on the full
+injected variant scores 46.71 versus 47.83 for the control on the full
 dev set ($z=-1.80$; 99:126): no reliable improvement, and the trend
 is negative. The dynamics show why. Injection costs $-4.8$ points at
 twenty episodes, and the policy then adapts back to parity---it

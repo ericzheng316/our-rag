@@ -5,7 +5,7 @@
 % training), F (verifier validation) 待写; 现有正文引用 Appendix~B/C/D/E/F 的
 % 字母暂以文字引用, 落地后改为 \ref。
 % ============================================================
-\section{Three arms in the training environment: full table}
+\section{Three variants in the training environment: full table}
 \label{app:main-table}
 
 \begin{table*}[t]
@@ -29,7 +29,7 @@ Search calls / question & 4.31 & 4.86 & 4.93 & & \\
 \caption{Query-level credit against outcome-only training and the
 trajectory-level coverage term: seed 1, step 100, closed-pool MuSiQue
 dev, question-level paired McNemar $z$ (query-level credit minus the
-named arm). The three arms share the SFT initialization, schedule, and
+named variant). The three variants share the SFT initialization, schedule, and
 data order.}
 \label{tab:main-qc}
 \end{table*}
@@ -84,8 +84,157 @@ outcomes are most often uniformly wrong.}
 \label{tab:repair}
 \end{table}
 
+\section{The same-base ladder}
+\label{app:ladder}
+Table~\ref{tab:ladder} places the result on the ladder of the same
+base model in the closed pool. Closed-book answering reaches 4.8 EM; a
+single retrieval of the pool's top ten paragraphs 20.8; the search
+protocol alone, zero-shot, 23.8; SFT adds 12.2 points over the
+zero-shot protocol (411:116, $z=12.85$); outcome-only RL adds 11.2 over
+SFT ($z=22.0$); query-level credit adds 3.8 over outcome-only RL
+($z=4.72$). At four hops the ladder runs
+$1.7 \rightarrow 24.0 \rightarrow 13.3 \rightarrow 18.5 \rightarrow
+32.9 \rightarrow 40.0$.\footnote{Ten of the pool's twenty paragraphs
+cover half the pool whatever the query, which is why single-shot
+retrieval scores above the zero-shot protocol at four hops.}
+% 原表(v1/v2): 前三行为开卷(IRCoT 139k)口径 (4.8 / 15.4 / 29.0), SFT 行为
+% SFT v3 (34.5); RL 两行 46.55/48.20 (单对) → 47.2/47.8 (种子均值)。
+% 原句(v2): "outcome-only RL adds 12.7 points; coverage shaping adds 0.6 on top
+% ... 1.7 → 7.9 → 10.1 → 24.9 → 32.9 → 35.3 ... the shaping term accounts for
+% 2.4 points of it on the seed means and 3.6 pooled over the four matched pairs."
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+Closed pool & EM & 4-hop & F1 \\
+\midrule
+Closed book                       & 4.8  & 1.7  & 12.6 \\
+Single-shot RAG (pool top-10)     & 20.8 & 24.0 & 28.7 \\
+Search protocol, zero-shot        & 23.8 & 13.3 & 31.1 \\
+SFT                               & 36.0 & 18.5 & 43.1 \\
+Outcome-only RL          & 47.2 & 32.9 & 55.4 \\
+Trajectory-level coverage & 47.8 & 35.3 & 55.9 \\
+Query-level credit       & \textbf{51.4} & \textbf{40.0} & \textbf{59.7} \\
+\bottomrule
+\end{tabular}}
+\caption{The same-base ladder on closed-pool MuSiQue dev. Every row is
+the same base model (Qwen3.5-9B) under progressively more training;
+the outcome-only and trajectory-level rows are means over seeds 1--3,
+the query-level row is the seed-1 run of Table~\ref{tab:main-qc}.}
+\label{tab:ladder}
+\end{table}
+
 \section{Open-corpus tables}
 \label{app:open-tables}
+
+% 2026-09-20: 原 §4.5 零样本开放表 + §4.6 续训表全文移入
+\subsection{Zero-shot on the open corpus}
+\label{app:open-zeroshot}
+Table~\ref{tab:open-qc} evaluates the three variants of seed 1 at step 100
+under dense retrieval over wiki18, on the same questions, with no
+training against that retriever. The penalty the trajectory-level term
+pays there (\S\ref{sec:mech-broadcast}) is absent from the query-level
+variant: on 2WikiMultihopQA it scores 40.45 against 37.05 ($z=+4.46$; 34.62
+vs.\ 27.15 at four hops, $z=+3.86$) and 41.25 for the outcome-only variant
+($z=-1.06$); on HotpotQA the three variants score 45.60, 45.60, and 46.50.
+On MuSiQue the 4-hop lead carries over (15.31 vs.\ 11.85 and 11.36,
+$z=+2.11$ and $+2.41$), while the overall score is 26.35 against 25.36
+and 28.01 ($z=+1.62$ and $-2.51$; the outcome-only value is the highest
+of its three seeds, whose mean is 27.15). The variant abstains far less
+(5.2\% of MuSiQue questions vs.\ 12.1 and 8.5; 38.2\% of 2Wiki 4-hop
+questions vs.\ 56.3 and 45.9) and searches less (3.36 calls per
+question vs.\ 3.78 and 3.70) at equal final coverage (45.0 vs.\ 45.5
+and 46.0). The search habit it learned---reach the same coverage in
+fewer calls---is calibrated to the lexical pool retriever, and under
+the dense retriever fewer calls reach less. The remedy is to earn the
+credit against the retriever the policy will be evaluated with
+(\S\ref{sec:results-open}).
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccrr}
+\toprule
+wiki18, seed 1 & Query credit & Traj.\ cov. & Outcome & $z$ vs.\ traj. & $z$ vs.\ outcome \\
+\midrule
+MuSiQue (2{,}417)  & 26.35 & 25.36 & 28.01 & $+1.62$ & $-2.51$ \\
+\quad 4-hop        & \textbf{15.31} & 11.85 & 11.36 & $+2.11$ & $+2.41$ \\
+HotpotQA (2{,}000) & 45.60 & 45.60 & 46.50 & $0.00$ & $-1.40$ \\
+2Wiki (2{,}000)    & 40.45 & 37.05 & 41.25 & $+4.46$ & $-1.06$ \\
+\quad 4-hop        & 34.62 & 27.15 & 35.29 & $+3.86$ & $-0.33$ \\
+\bottomrule
+\end{tabular}
+\caption{The three variants of seed 1 at step 100 on the open corpus, same
+questions, question-level paired McNemar $z$ (query-level credit minus
+the named variant); no variant has trained against the open retriever.}
+\label{tab:open-qc}
+\end{table*}
+
+\subsection{Continued training against the open retriever: all runs}
+\label{app:stage2}
+Two measurements fix what continued training has to change. Against
+wiki18, the official sub-questions with gold intermediate answers
+substituted in reach the complete gold set of 43.8/24.9/15.6\% of
+MuSiQue questions at 2/3/4 hops, and querying by the gold paragraphs'
+titles reaches it for 80.1/62.1/62.0\% (Table~\ref{tab:reach},
+Appendix~\ref{app:open-tables}): the passages are present and the index
+returns them when asked by title; the policy's natural-language queries
+do not reach them. Under that retriever the policy's own alternatives
+at a state are phrased alike (10--20\% of states show a difference,
+\S\ref{sec:mech-broadcast}), so the phrasing has to change against the
+retriever itself.
+
+Table~\ref{tab:stage2} continues training from the step-100
+checkpoints of seed 1 for 50 episodes with wiki18 retrieval in the
+loop (\S\ref{sec:setup-data}). Three variants isolate the two questions:
+the outcome-only checkpoint continued with and without query-level
+credit, and the query-level checkpoint continued with credit. All
+three reach 28.3--28.7 EM on wiki18 MuSiQue, the highest values of
+this study (the outcome-only checkpoint scores 28.01 before continuing;
+the extended-training flagship of Appendix~\ref{app:extended} 26.52; the strongest
+external system under the same retriever, ReSearch, 22.09). A control
+that continues the same checkpoint for 30 episodes in the closed pool
+instead moves the other way on every open-corpus set (MuSiQue 26.56,
+$z=-2.59$; 2Wiki 38.85, $z=-3.41$): the open-corpus gain comes from the
+environment, not from additional training. Transfer gains are larger
+than the in-task gain: from the same checkpoint, continued training with
+credit reaches 47.80 on HotpotQA and 47.00 on 2WikiMultihopQA against
+46.80 and 44.30 without it ($+1.0$, $z=1.80$; $+2.7$, 132:78,
+$z=3.73$), and $+0.4$ on MuSiQue ($z=0.61$). Continued training against
+the open retriever lowers closed-pool EM for every variant (to 44.2--46.2
+from 47.6--51.4): retrieval behaviour specializes to the retriever it
+is trained against, in both directions, which is the case for training
+against the retriever a policy will be deployed with.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Continued on wiki18, 50 ep.\ (seed 1) & MuSiQue & HotpotQA & 2Wiki \\
+\midrule
+Start: outcome-only, step 100      & 28.01 & 46.50 & 41.25 \\
+\quad + continued, no credit       & 28.30 & 46.80 & 44.30 \\
+\quad + continued, query credit    & \textbf{28.67} & 47.80 & \textbf{47.00} \\
+Start: query credit, step 100      & 26.35 & 45.60 & 40.45 \\
+\quad + continued, query credit    & 28.55 & \textbf{48.55} & 44.45 \\
+\midrule
+Control: outcome-only, 30 ep.\ more in the closed pool & 26.56 & 45.60 & 38.85 \\
+Extended-training flagship (Appendix~\ref{app:extended}), no open training & 26.52 & 47.15 & 41.75 \\
+Strongest external system (wiki18)  & 22.09 & 45.00 & --- \\
+\bottomrule
+\end{tabular}
+\caption{Continued training against the open retriever from the
+step-100 checkpoints of seed 1 (alias EM on wiki18; HotpotQA and 2Wiki
+on the 2{,}000-question subsets of Table~\ref{tab:open-qc}). The
+external rows are ReSearch on MuSiQue and Search-R1 on HotpotQA, the
+strongest of the six reproduced systems on each.}
+\label{tab:stage2}
+\end{table*}
+
 
 % 2026-09-16 从原 §8 移入: 轨迹级项开放域三对配对 + 可达率表
 \begin{table}[t]
@@ -234,7 +383,7 @@ a 122B teacher model over MuSiQue training questions, with plans
 anchored to the official question decompositions, then filtered for
 protocol compliance and leakage. The teacher is used only to generate
 SFT data; reinforcement learning, evaluation, and deployment use the 9B
-policy, and every arm of \S\ref{sec:results} starts from the same SFT
+policy, and every variant of \S\ref{sec:results} starts from the same SFT
 checkpoint.
 
 Each training run performs 100 episodes with 32 questions per episode
@@ -242,14 +391,14 @@ and $K=8$ rollouts per question (sampling temperature 0.7, at most 8
 turns). A run visits 3{,}200 of the 19{,}938 available training
 questions, each at most once. Runs use explicit random seeds that
 control the data order, parameter initialization, and the rollout
-sampler. Three arms share each seed: \emph{query-level credit}
+sampler. Three variants share each seed: \emph{query-level credit}
 ($M=3$ counterfactual queries per search turn, $\beta_q=1$, 16-word
 retrieval cap, no coverage term in the return), \emph{trajectory-level
 coverage} ($\beta=0.3$, Eq.~\ref{eq:covreward}), and
 \emph{outcome-only} ($\beta=0$, no credit). The trajectory-level and
-outcome-only arms of a seed see the same question sequence and the
+outcome-only variants of a seed see the same question sequence and the
 same rollout samples and differ only in the reward. Counterfactual
-sampling draws on the engine's random stream, so the query-level arm
+sampling draws on the engine's random stream, so the query-level variant
 shares the seed's data order and initialization but not its rollout
 samples; that comparison is at the run level, with question-level
 paired tests on the development set. Remaining hyperparameters are
@@ -291,7 +440,7 @@ reported checkpoint is step 50.
 The primary comparison is \emph{query-level credit versus outcome-only
 versus trajectory-level coverage} at step 100 of seed 1, with the same
 SFT initialization, training budget and schedule, data order, and
-evaluation protocol. The trajectory-level and outcome-only arms are
+evaluation protocol. The trajectory-level and outcome-only variants are
 additionally compared over four matched pairs of runs (explicit seeds
 1--3 and the default seed). Secondary comparisons position the system:
 the zero-shot base policy, SFT-only, and external search-RL systems
@@ -319,7 +468,7 @@ is reported in Appendix~\ref{app:seeds}.
 \label{sec:setup-checkpoint}
 
 All primary numbers use the fixed final checkpoint of the 100-episode
-schedule for every arm, and step 50 for continued training; the
+schedule for every variant, and step 50 for continued training; the
 extended-training sweep appears in Appendix~\ref{app:extended}.
 
 % 原句(v1, 5.1 末): "Runs use explicit random seeds that control the data
