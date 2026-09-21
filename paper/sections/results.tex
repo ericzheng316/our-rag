@@ -152,7 +152,9 @@ checkpoint for 50 episodes with wiki18 retrieval in the loop
 (\S\ref{sec:setup}). The continued run reaches 28.55 EM on MuSiQue
 ($+2.2$ over its checkpoint, $z=3.11$; $+6.5$ over ReSearch, $z=7.80$),
 48.55 on HotpotQA ($+3.6$ over Search-R1, $z=3.94$, which is trained on
-HotpotQA), and 44.45 on 2WikiMultihopQA; on the 139k corpus, where every
+HotpotQA), and 44.45 on 2WikiMultihopQA, level with ReSearch (44.15,
+$z=0.24$) and below R3-RAG (47.65), whose training data include
+2WikiMultihopQA; on the 139k corpus, where every
 gold paragraph is present, the extended-training checkpoint of
 Appendix~\ref{app:extended} scores 45.64 against 32.77.
 
@@ -164,16 +166,16 @@ Appendix~\ref{app:extended} scores 45.64 against 32.77.
  & \multicolumn{2}{c}{MuSiQue (wiki18)} & HotpotQA (wiki18) & 2Wiki (wiki18) & MuSiQue (139k) \\
 System & EM & F1 & EM & EM & EM \\
 \midrule
-R3-RAG       & ---   & ---   & 38.20 & --- & 16.34 \\
-ZeroSearch   & 9.43  & 16.78 & 30.70 & --- & 11.92 \\
-R1-Searcher  & 15.27 & 22.88 & 39.60 & --- & 24.74 \\
-StepSearch   & 18.25 & 26.96 & 35.15 & --- & 25.49 \\
-Search-R1    & 20.40 & 29.50 & 45.00 & --- & 31.73 \\
-ReSearch     & 22.09 & 32.43 & 44.05 & --- & 32.77 \\
+R3-RAG       & 14.77 & 22.88 & 44.50 & \textbf{47.65} & 17.17 \\
+ZeroSearch   & 9.43  & 16.78 & 30.70 & 27.95 & 11.92 \\
+R1-Searcher  & 15.27 & 22.88 & 39.60 & 39.40 & 24.74 \\
+StepSearch   & 18.25 & 26.96 & 35.15 & 36.20 & 25.49 \\
+Search-R1    & 20.40 & 29.50 & 45.00 & 39.75 & 31.73 \\
+ReSearch     & 22.09 & 32.43 & 44.05 & 44.15 & 32.77 \\
 \midrule
 Ours, closed-pool training only (step 100) & 26.35 & 36.28 & 45.60 & 40.45 & --- \\
 \rowcolor{shade}
-Ours, + 50 episodes against wiki18 & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & \textbf{44.45} & 44.97 \\
+Ours, + 50 episodes against wiki18 & \textbf{28.55} & \textbf{38.81} & \textbf{48.55} & 44.45 & 44.97 \\
 Ours, extended training (App.~\ref{app:extended}) & 26.52 & 36.90 & 47.15 & 41.75 & \textbf{45.64} \\
 \bottomrule
 \end{tabular}
@@ -187,13 +189,15 @@ pool union); alias EM and F1 on full MuSiQue dev, HotpotQA and 2Wiki on
 % trained on MuSiQue; Search-R1 and R1-Searcher on HotpotQA. Question-level
 % paired McNemar against the strongest external system on each set:
 % MuSiQue vs.\ ReSearch $z=7.80$ (shaded row); HotpotQA vs.\ Search-R1 $z=3.94$.
-% R3-RAG (R3-RAG-Qwen, Qwen2.5-7B): free-form answers scored as processed EM
-% (short answer extracted by Qwen2.5-72B for HotpotQA, Qwen3.5-122B for the
-% 139k run; UNANSWERABLE 23.0\% on 139k); HotpotQA 2k-subset value taken from
-% the full-dev (7,405) run by question match; paired vs ours: 139k ep120
-% 773:68 $z=24.3$, HotpotQA q2q1 324:117 $z=9.86$. R3-RAG on wiki18 MuSiQue /
-% 2Wiki: not yet run (r3_wiki18 suite started 2026-09-18, experiment window).
-% 2Wiki: external systems not yet run (6 evals);
+% R3-RAG (R3-RAG-Qwen, Qwen2.5-7B): free-form answers; scores are processed EM
+% after short-answer extraction by Qwen3.5-9B (HANDOFF §43, 2026-09-19; direct
+% EM on wiki18 MuSiQue 6.37, UNANSWERABLE 26.7\%); its training data include
+% HotpotQA and 2Wiki. Paired vs ours: MuSiQue ep120 $z=+12.83$; HotpotQA ep120
+% $z=+2.84$; 2Wiki ep120 $z=-5.13$, n2q1 $z=-0.59$; 139k ep120 $z=+23.71$.
+% 2Wiki six-way (HANDOFF §41, 2026-09-17, same 2,000 questions as ep120):
+% ours +50 vs ReSearch 305:299 $z=+0.24$; ep120 vs ReSearch $z=-2.04$;
+% R1-Searcher is trained on 2Wiki. ReSearch leads on bridge_comparison
+% (57.7 vs ours 33.5), ours on the other three 2Wiki types.
 % 139k: outcome-only step-100 arm scores 45.72 (non-paired).
 \label{tab:external}
 \end{table*}
